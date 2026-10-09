@@ -24,6 +24,9 @@ struct DiscoveredServer: Identifiable {
     @Published var captureShortcuts = true
     @Published var reconnectAutomatically = true
     @Published var receivedFrames = 0
+    @Published var transparentMode = UserDefaults.standard.object(forKey: "transparentMode") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(transparentMode, forKey: "transparentMode") }
+    }
     private var browser: NWBrowser?
     private var peer: PeerConnection?
     private var decoder: VideoDecoder?
@@ -32,6 +35,7 @@ struct DiscoveredServer: Identifiable {
     private var savedEndpoint: NWEndpoint?
     private var savedSecret: PairingSecret?
     private var userDisconnected = false
+    private var serverFailure: String?
     private let browseQueue = DispatchQueue(label: "Screener.discovery")
     private let decodeQueue = DispatchQueue(label: "Screener.decode", qos: .userInteractive)
     private let frameLock = NSLock()
@@ -77,13 +81,13 @@ struct DiscoveredServer: Identifiable {
         } catch { self.error = error.localizedDescription }
     }
     private func begin(endpoint: NWEndpoint, secret: PairingSecret) {
-        connecting = true; connected = false; status = "Connecting securely…"; desktop = nil; image = nil
+        connecting = true; connected = false; status = "Connecting securely…"; desktop = nil; image = nil; serverFailure = nil
         let peer = PeerConnection(endpoint: endpoint, secret: secret); self.peer = peer
         let decoder = VideoDecoder(); self.decoder = decoder
         let peerID = ObjectIdentifier(peer)
         let budget = DecodeBudget()
         decoder.onImage = { [weak self] image in self?.deliver(PixelFrame(image), peerID: peerID) }
-        peer.onReady = { [weak self, weak peer] in Task { @MainActor in
+        peer.onReady = { [weak self, weak peer] in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
             self.status = "Starting desktop…"
             try? peer.send(WireMessage(.hello, value: ClientHello(name: Host.current().localizedName ?? "MacBook", fps: self.fps, bitrate: self.bitrate)))
@@ -103,14 +107,15 @@ struct DiscoveredServer: Identifiable {
                         else { try decoder.decode(message.payload) }
                     } catch { Task { @MainActor in if self.peer === peer { self.error = error.localizedDescription; self.disconnect() } } }
                 }
-            } else { Task { @MainActor in guard self.peer === peer else { return }; self.receive(message, secret: secret) } }
+            } else { DispatchQueue.main.async { guard self.peer === peer else { return }; self.receive(message, secret: secret) } }
         }
-        peer.onClose = { [weak self, weak peer] reason in Task { @MainActor in
+        peer.onClose = { [weak self, weak peer] reason in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
             self.peer = nil; self.connected = false; self.connecting = false; self.image = nil; self.desktop = nil
             let decoder = self.decoder; self.decoder = nil; self.decodeQueue.async { decoder?.invalidate() }
             self.status = "Disconnected"; if let reason { self.error = reason }
-            if !self.userDisconnected && self.reconnectAutomatically { self.scheduleReconnect() }
+            let rejected = reason != nil && reason == self.serverFailure
+            if !rejected && !self.userDisconnected && self.reconnectAutomatically { self.scheduleReconnect() }
         } }
         peer.start()
     }
@@ -138,7 +143,7 @@ struct DiscoveredServer: Identifiable {
                 do { try SecretStore.save(secret, account: "client:\(host)") }
                 catch { self.error = "Connected. The key could not be saved: \(error.localizedDescription)" }
             case .failure:
-                let text = try message.decode(String.self); error = String(text.prefix(2000))
+                let text = String(try message.decode(String.self).prefix(2000)); error = text; serverFailure = text
                 if !connected { userDisconnected = true; disconnect(); error = text }
             case .clipboard:
                 guard message.payload.count <= 256 * 1024 else { return }

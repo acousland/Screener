@@ -78,6 +78,9 @@ public final class PeerConnection: @unchecked Sendable {
     private let queue = DispatchQueue(label: "Screener.peer", qos: .userInteractive)
     private var parser = MessageParser()
     private var closed = false
+    private var closing = false
+    private var closingReason: String?
+    private var remoteFailure: String?
     private var timeout: DispatchWorkItem?
     private let lock = NSLock()
     private var videoBusy = false
@@ -102,6 +105,22 @@ public final class PeerConnection: @unchecked Sendable {
         connection.start(queue: queue)
     }
     public func close() { queue.async { self.finish(nil) } }
+    // Send the rejection and a TLS/TCP end-of-stream before cancelling the connection.
+    // Keep the peer alive briefly even when the caller releases a rejected session.
+    public func close(with reason: String) {
+        queue.async {
+            guard !self.closed, !self.closing else { return }
+            self.closing = true; self.closingReason = reason; self.timeout?.cancel()
+            do {
+                let message = try WireMessage(.failure, value: String(reason.prefix(1000)))
+                self.connection.send(content: message.framed(), contentContext: .finalMessage, isComplete: true,
+                    completion: .contentProcessed { [self] error in
+                        if error != nil { self.finish(reason) }
+                    })
+                self.queue.asyncAfter(deadline: .now() + 2) { self.finish(reason) }
+            } catch { self.finish(reason) }
+        }
+    }
     private func finish(_ reason: String?) {
         guard !closed else { return }; closed = true; timeout?.cancel()
         connection.stateUpdateHandler = nil; connection.cancel(); onClose?(reason)
@@ -109,10 +128,13 @@ public final class PeerConnection: @unchecked Sendable {
     private func receive() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, complete, error in
             guard let self, !self.closed else { return }
-            do { if let data { for message in try self.parser.append(data) { self.onMessage?(message) } } }
+            do { if let data { for message in try self.parser.append(data) {
+                self.remoteFailure = message.kind == .failure ? try? message.decode(String.self) : nil
+                if !self.closing { self.onMessage?(message) }
+            } } }
             catch { self.finish(error.localizedDescription); return }
             if let error { self.finish(error.localizedDescription) }
-            else if complete { self.finish("The other Mac disconnected.") }
+            else if complete { self.finish(self.closingReason ?? self.remoteFailure ?? "The other Mac disconnected.") }
             else { self.receive() }
         }
     }
@@ -122,7 +144,7 @@ public final class PeerConnection: @unchecked Sendable {
             queue.async { self.finish("The connection cannot keep up with outgoing messages.") }; return
         }
         queue.async {
-            guard !self.closed else { self.sent(); return }
+            guard !self.closed, !self.closing else { self.sent(); return }
             self.connection.send(content: message.framed(), completion: .contentProcessed { error in
                 self.sent(); if let error { self.finish(error.localizedDescription) }
             })
@@ -134,7 +156,7 @@ public final class PeerConnection: @unchecked Sendable {
         guard !videoBusy else { lock.unlock(); return false }
         videoBusy = true; lock.unlock()
         queue.async {
-            guard !self.closed else { self.clearVideo(); return }
+            guard !self.closed, !self.closing else { self.clearVideo(); return }
             self.connection.send(content: WireMessage(.video, payload: payload).framed(), completion: .contentProcessed { error in
                 self.clearVideo(); if let error { self.finish(error.localizedDescription) }
             })

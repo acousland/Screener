@@ -24,4 +24,5 @@ info = {
     'SUEnableAutomaticChecks': True, 'SUAutomaticallyUpdate': False,
 }
 if role == 'Client': info['NSPrincipalClass'] = 'ScreenerApplication'
+if role == 'Server': info['NSScreenCaptureUsageDescription'] = 'Screener shares the selected desktop with your connected MacBook.'
 Path(destination).write_bytes(plistlib.dumps(info))

@@ -7,6 +7,16 @@ import ScreenerCore
 /// Forward shortcuts to the remote desktop only while the desktop has keyboard focus.
 @objc(ScreenerApplication) final class ScreenerApplication: NSApplication {
     override func sendEvent(_ event: NSEvent) {
+        if let remote = keyWindow?.firstResponder as? RemoteView, event.type == .keyDown,
+            event.modifierFlags.intersection([.control, .option, .command, .shift]) == [.control, .option] {
+            if event.keyCode == 17 { remote.onToggleTransparent?(); return }
+            if event.keyCode == 53 {
+                let exitFullScreen = remote.transparent
+                remote.releaseFocus()
+                if exitFullScreen { keyWindow?.toggleFullScreen(nil) }
+                return
+            }
+        }
         if let remote = keyWindow?.firstResponder as? RemoteView, remote.capturesShortcuts,
             [.keyDown, .keyUp, .flagsChanged].contains(event.type) {
             if event.type == .keyDown, event.keyCode == 53, event.modifierFlags.contains([.control, .option]) {
@@ -22,6 +32,10 @@ final class RemoteView: MTKView, MTKViewDelegate {
     var sendInput: ((InputEvent) -> Void)?
     var capturesShortcuts = true
     var onReleaseFocus: (() -> Void)?
+    var onToggleTransparent: (() -> Void)?
+    var transparent = false
+    private var cursorHidden = false
+    private var windowObservers: [NSObjectProtocol] = []
     private var image: CVPixelBuffer?
     private var imageSize = CGSize(width: 3840, height: 2160)
     private var context: CIContext?
@@ -44,12 +58,58 @@ final class RemoteView: MTKView, MTKViewDelegate {
         self.image = image
         if let image { imageSize = CGSize(width: CVPixelBufferGetWidth(image), height: CVPixelBufferGetHeight(image)) }
         draw()
+        updateLocalCursor()
     }
+    func setTransparent(_ enabled: Bool) {
+        let entering = enabled && !transparent
+        transparent = enabled
+        if entering, window?.isKeyWindow == true { window?.makeFirstResponder(self) }
+        updateLocalCursor()
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        restoreLocalCursor()
+        windowObservers.forEach(NotificationCenter.default.removeObserver); windowObservers.removeAll()
+        if let window {
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+                windowObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
+                    MainActor.assumeIsolated {
+                        if note.name == NSWindow.willCloseNotification || note.name == NSWindow.didResignKeyNotification {
+                            self?.restoreLocalCursor(); self?.releaseHeldInput()
+                        }
+                        else { self?.updateLocalCursor() }
+                    }
+                })
+            }
+            for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+                windowObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                    MainActor.assumeIsolated {
+                        if note.name == NSApplication.didResignActiveNotification { self?.restoreLocalCursor(); self?.releaseHeldInput() }
+                        else { self?.updateLocalCursor() }
+                    }
+                })
+            }
+        }
+        updateLocalCursor()
+    }
+    private func updateLocalCursor() {
+        let inside = window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? false
+        let hide = transparent && image != nil && NSApp.isActive && window?.isKeyWindow == true && window?.firstResponder === self && inside
+        if hide, !cursorHidden { NSCursor.hide(); cursorHidden = true }
+        else if !hide { restoreLocalCursor() }
+    }
+    func restoreLocalCursor() { if cursorHidden { NSCursor.unhide(); cursorHidden = false } }
+    override func mouseEntered(with event: NSEvent) { updateLocalCursor() }
+    override func mouseExited(with event: NSEvent) { restoreLocalCursor() }
+    override func cursorUpdate(with event: NSEvent) { updateLocalCursor() }
+    override func becomeFirstResponder() -> Bool { let accepted = super.becomeFirstResponder(); updateLocalCursor(); return accepted }
+    deinit { windowObservers.forEach(NotificationCenter.default.removeObserver) }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { }
     func draw(in view: MTKView) {
         guard let drawable = currentDrawable, let commandBuffer = commandQueue?.makeCommandBuffer(), let context else { return }
         let outputBounds = CGRect(origin: .zero, size: drawableSize)
-        var output = CIImage(color: CIColor(red: 0.025, green: 0.035, blue: 0.045)).cropped(to: outputBounds)
+        let background = transparent ? CIColor.black : CIColor(red: 0.025, green: 0.035, blue: 0.045)
+        var output = CIImage(color: background).cropped(to: outputBounds)
         if let image {
             let source = CIImage(cvPixelBuffer: image)
             let fitted = ScreenGeometry.fit(content: source.extent.size, in: outputBounds)
@@ -63,7 +123,7 @@ final class RemoteView: MTKView, MTKViewDelegate {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .inVisibleRect], owner: self, userInfo: nil)
+        let area = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .inVisibleRect], owner: self, userInfo: nil)
         addTrackingArea(area); tracking = area
     }
     private func point(_ event: NSEvent, clamp: Bool = false) -> CGPoint? {
@@ -81,7 +141,7 @@ final class RemoteView: MTKView, MTKViewDelegate {
         sendInput?(InputEvent(action, x: point.x, y: point.y, button: button, modifiers: UInt64(event.modifierFlags.rawValue),
             deltaX: action == .down || action == .up ? Double(event.clickCount) : 0))
     }
-    override func mouseMoved(with event: NSEvent) { mouse(event, action: .move) }
+    override func mouseMoved(with event: NSEvent) { updateLocalCursor(); mouse(event, action: .move) }
     override func mouseDragged(with event: NSEvent) { mouse(event, action: .move) }
     override func rightMouseDragged(with event: NSEvent) { mouse(event, action: .move) }
     override func otherMouseDragged(with event: NSEvent) { mouse(event, action: .move) }
@@ -108,22 +168,30 @@ final class RemoteView: MTKView, MTKViewDelegate {
     override func keyUp(with event: NSEvent) { forwardKey(event) }
     override func flagsChanged(with event: NSEvent) { forwardKey(event) }
     override func resignFirstResponder() -> Bool {
+        restoreLocalCursor()
+        releaseHeldInput()
+        return super.resignFirstResponder()
+    }
+    private func releaseHeldInput() {
         for key in pressedKeys { sendInput?(InputEvent(.keyUp, keyCode: key)) }
         for button in pressedButtons { sendInput?(InputEvent(.up, button: button)) }
         sendInput?(InputEvent(.flags, keyCode: 0)); pressedKeys.removeAll(); pressedButtons.removeAll()
-        return super.resignFirstResponder()
     }
     func releaseFocus() { window?.makeFirstResponder(nil); onReleaseFocus?() }
 }
 struct RemoteDesktop: NSViewRepresentable {
     @ObservedObject var model: ClientModel
+    var transparent: Bool
     func makeNSView(context: Context) -> RemoteView {
         let view = RemoteView(); view.sendInput = { [weak model] event in model?.sendInput(event) }
         view.onReleaseFocus = { [weak model] in model?.captureShortcuts = false }
+        view.onToggleTransparent = { [weak model] in model?.transparentMode.toggle() }
         return view
     }
     func updateNSView(_ view: RemoteView, context: Context) {
         view.capturesShortcuts = model.captureShortcuts
+        view.setTransparent(transparent)
         view.update(image: model.image)
     }
+    static func dismantleNSView(_ view: RemoteView, coordinator: ()) { view.restoreLocalCursor() }
 }

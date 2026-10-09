@@ -12,6 +12,10 @@ import ScreenerCore
             .commands {
                 UpdateCommands(updater: updater)
                 CommandGroup(replacing: .newItem) { }
+                CommandMenu("View") {
+                    Toggle("Transparent Mode", isOn: $model.transparentMode)
+                        .keyboardShortcut("t", modifiers: [.control, .option])
+                }
                 CommandMenu("Connection") {
                     Button("Disconnect") { model.disconnect() }.disabled(!model.connected && !model.connecting)
                     Toggle("Send Keyboard Shortcuts to Mini", isOn: $model.captureShortcuts)
@@ -23,9 +27,12 @@ import ScreenerCore
 }
 private struct ClientView: View {
     @ObservedObject var model: ClientModel
+    @StateObject private var windowState = ClientWindowState()
+    private var transparent: Bool { model.transparentMode && windowState.fullScreen && model.connected }
     var body: some View {
         VStack(spacing: 0) {
             if model.connected || model.connecting {
+                if !transparent {
                 HStack(spacing: 14) {
                     Image(systemName: "display.2").foregroundStyle(.teal)
                     VStack(alignment: .leading, spacing: 2) { Text(model.desktop?.name ?? model.host).font(.callout.weight(.semibold)); Text(model.status).font(.caption).foregroundStyle(.secondary) }
@@ -40,21 +47,30 @@ private struct ClientView: View {
                     }
                     Button("Disconnect") { model.disconnect() }
                 }.padding(14).background(.bar)
+                }
                 ZStack {
-                    RemoteDesktop(model: model)
+                    RemoteDesktop(model: model, transparent: transparent)
                     if model.image == nil { VStack(spacing: 12) { ProgressView(); Text(model.status).foregroundStyle(.secondary) }.padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)) }
                 }
+                if !transparent {
                 HStack {
                     Text("Control–Option–Esc releases keyboard shortcuts").font(.caption).foregroundStyle(.secondary)
                     Spacer(); Toggle("Remote shortcuts", isOn: $model.captureShortcuts).toggleStyle(.checkbox).font(.caption)
                 }.padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
+                }
             } else {
                 connectionForm
             }
-            if let error = model.error {
+            if let error = model.error, !transparent {
                 HStack(alignment: .top) { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange); Text(error).font(.callout).textSelection(.enabled); Spacer(); Button { model.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain) }
                     .padding(14).background(.orange.opacity(0.08))
             }
+        }
+        .ignoresSafeArea(transparent ? .container : [], edges: .all)
+        .background(ClientWindowReader(state: windowState))
+        .onChange(of: transparent) { _, enabled in
+            if enabled { model.captureShortcuts = true }
+            windowState.setTransparent(enabled)
         }
     }
     private var connectionForm: some View {

@@ -3,6 +3,7 @@ import SwiftUI
 import Network
 import ScreenCaptureKit
 import ServiceManagement
+import OSLog
 import ScreenerCore
 
 @MainActor final class ServerModel: ObservableObject {
@@ -34,6 +35,7 @@ import ScreenerCore
     private var generation = 0
     private var poll: Timer?
     private let networkQueue = DispatchQueue(label: "Screener.listener", qos: .userInteractive)
+    private let sessionLog = Logger(subsystem: "au.com.acousland.ScreenerServer", category: "session")
     init() {
         poll = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in Task { @MainActor in self?.refresh() } }
         refresh()
@@ -137,10 +139,17 @@ import ScreenerCore
     private func receive(_ message: WireMessage, from peer: PeerConnection) {
         do {
             if message.kind == .hello {
-                guard viewer == nil else { try peer.send(WireMessage(.failure, value: "This mini already has a connected viewer.")); peer.close(); return }
+                guard viewer == nil else {
+                    let reason = "This mini already has a connected viewer."
+                    error = reason; peer.close(with: reason); return
+                }
                 let hello = try message.decode(ClientHello.self)
                 guard hello.valid else { throw ScreenerError.message("The client version or streaming settings are unsupported.") }
-                guard screenPermission else { throw ScreenerError.message("Grant Screener Server Screen Recording permission on the mini, then reconnect.") }
+                screenPermission = CGPreflightScreenCaptureAccess()
+                guard screenPermission else { throw ScreenerError.message("Grant Screener Server Screen Recording permission on the mini, then quit and reopen Screener Server before reconnecting.") }
+                guard selectedDisplay != 0, desktop != nil, CGDisplayIsOnline(selectedDisplay) != 0 else {
+                    throw ScreenerError.message("The selected monitor is no longer available. Choose an available monitor in Screener Server and reconnect.")
+                }
                 self.hello = hello; viewer = peer; clientName = hello.name; status = "Connected to \(hello.name)"
                 sendDesktop(); Task { await restartCapture() }; return
             }
@@ -160,7 +169,12 @@ import ScreenerCore
             case .ping: peer.send(WireMessage(.pong, payload: message.payload))
             default: break
             }
-        } catch { try? peer.send(WireMessage(.failure, value: error.localizedDescription)); if viewer !== peer { peer.close() } }
+        } catch {
+            self.error = error.localizedDescription
+            sessionLog.error("Session message rejected: \(error.localizedDescription, privacy: .public)")
+            if viewer !== peer { peer.close(with: error.localizedDescription) }
+            else { try? peer.send(WireMessage(.failure, value: error.localizedDescription)) }
+        }
     }
     private func sendDesktop() { if let desktop, let viewer { try? viewer.send(WireMessage(.desktop, value: desktop)) } }
     private func sendFailure(_ text: String) { if let viewer { try? viewer.send(WireMessage(.failure, value: text)) } }
@@ -185,10 +199,13 @@ import ScreenerCore
     private func stopSession(_ reason: String?) {
         generation += 1; input.releaseAll()
         let old = viewer; viewer = nil; hello = nil; clientName = nil; streaming = false
-        if let old { candidates.removeValue(forKey: ObjectIdentifier(old)); old.close() }
+        if let old {
+            candidates.removeValue(forKey: ObjectIdentifier(old))
+            if let reason { old.close(with: reason) } else { old.close() }
+        }
         let capture = capture; self.capture = nil; Task { await capture?.stop() }
         status = running ? "Waiting for your MacBook" : "Server stopped"
-        if let reason { error = reason }
+        if let reason { error = reason; sessionLog.error("Session ended: \(reason, privacy: .public)") }
     }
     func rotateKey() {
         guard viewer == nil else { error = "Disconnect the viewer before changing the connection key."; return }

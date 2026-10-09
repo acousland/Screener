@@ -20,6 +20,8 @@ The initial implementation targets Apple silicon and macOS 15+. The intended tes
 
 Click the remote desktop to focus it. **Control–Option–Esc** releases remote keyboard shortcuts. Disconnecting or moving focus releases held keys/buttons. Clipboard text sharing is off by default; enable it on the Server and use the Client's clipboard menu to transfer text explicitly.
 
+**Transparent Mode** is enabled by default in the Client's **View** menu. In full screen it hides Screener's controls, title bar, local menu bar and Dock, and shows only the remote desktop and its cursor. **Control–Option–T** toggles the mode. **Control–Option–Esc** exits transparent full screen and releases keyboard focus so you can return to the local controls. Local window controls and cursor visibility are restored when you leave the mode, switch apps or disconnect. Video retains the remote display's aspect ratio.
+
 Use a stable LAN connection. Wired Ethernet on the mini is recommended. TCP port **49555** must be reachable; discovery uses Bonjour `_screener._tcp`. There is no cloud service or relay. Do not expose the server directly to the public internet.
 
 ## Display scaling

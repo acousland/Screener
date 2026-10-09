@@ -1,15 +1,16 @@
-Screener's first preview provides a native server for the Mac mini and a client for the MacBook.
+Adds Transparent Mode for full screen: only the remote desktop is visible, with Screener's controls, title bar, local menu bar, Dock and duplicate local cursor hidden. The preference is enabled by default and can be changed in **View → Transparent Mode**.
 
-- A persistent virtual monitor for headless operation, with macOS HiDPI scaling modes.
-- Hardware-encoded H.264 streaming up to 3840 × 2160, at a selectable 30 or 60 fps target.
-- Direct encrypted LAN connections authenticated with a random connection key.
-- Remote keyboard, mouse, trackpad scrolling, and optional clipboard text transfer.
-- Separate Sparkle update feeds for the Server and Client applications.
+Use **Control–Option–T** to toggle Transparent Mode, or **Control–Option–Esc** to leave transparent full screen and return to local controls. Normal window controls and cursor visibility return when you switch apps, disconnect or leave the mode. The remote display's aspect ratio is preserved.
 
-Both downloads are Developer ID signed and notarized by Apple. Sparkle verifies the signed update feeds and archives. All compilation, tests, signing and notarization were performed locally; GitHub Actions is disabled.
+Also fixes connection failures that previously appeared only as “The other Mac disconnected.”
 
-Install **Screener Server** on the mini and **Screener Client** on the MacBook. Grant the Server Screen Recording and Accessibility permissions, start it, then copy its connection key to the Client.
+- The Server sends the rejection or capture failure before closing the connection.
+- Both applications display the reason, including missing Screen Recording permission or an unavailable monitor.
+- The Client preserves message order and stops automatically retrying a rejected session.
+- The Server records session errors in the macOS log and includes its screen-capture usage description.
 
-This preview requires Apple silicon and macOS 15 or later. Headless operation requires a logged-in macOS desktop session. Audio, file transfer, pre-login access, HDR, and internet relays are not included in this version. The virtual monitor uses a private macOS interface and must be checked after OS updates. Text is carried using H.264 4:2:0; it does not match Apple's 4:4:4 High Performance mode for every kind of coloured text.
+On the mini, grant Screener Server Screen Recording permission in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen the Server. The connection key is unchanged by this update.
 
-The frame rate is a target, not a guarantee. See docs/VALIDATION.md for the checks completed on the release build and the remaining checks on two physical Macs.
+Apple High Performance Screen Sharing can remove Screener’s virtual monitor and leave its fixed identity unavailable. Use Standard Screen Sharing while setting up Screener. Recovery from that virtual-display conflict remains a known limitation.
+
+Both apps are built and signed locally, then notarized by Apple. Sparkle verifies the signed update feeds and archives. GitHub Actions remains disabled.
