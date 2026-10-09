@@ -41,7 +41,7 @@ import ScreenerCore
         refresh()
         if UserDefaults.standard.bool(forKey: "startServerOnLaunch") { Task { await start() } }
     }
-    func refresh() {
+    func refresh(restartStream: Bool = true) {
         screenPermission = CGPreflightScreenCaptureAccess(); controlPermission = AXIsProcessTrusted()
         loginItem = SMAppService.mainApp.status == .enabled
         displays = displayManager.list()
@@ -52,7 +52,7 @@ import ScreenerCore
                 desktop = info
                 if selectedDisplay == displayManager.virtualID { displayManager.saveScaling(info) }
                 sendDesktop()
-                if viewer != nil { Task { await restartCapture() } }
+                if viewer != nil, restartStream { Task { await restartCapture() } }
             }
         } catch { if viewer != nil { stopSession(error.localizedDescription) } }
     }
@@ -156,7 +156,7 @@ import ScreenerCore
             guard viewer === peer else { peer.close(); return }
             switch message.kind {
             case .input: input.apply(try message.decode(InputEvent.self), displayID: selectedDisplay)
-            case .configure: setScaling(try message.decode(ConfigureDisplay.self).modeID)
+            case .configure: try configure(try message.decode(ConfigureDisplay.self))
             case .clipboard:
                 guard clipboardEnabled else { sendFailure("Enable clipboard sharing in Screener Server first."); return }
                 guard message.payload.count <= 256 * 1024 else { return }
@@ -176,7 +176,26 @@ import ScreenerCore
             else { try? peer.send(WireMessage(.failure, value: error.localizedDescription)) }
         }
     }
-    private func sendDesktop() { if let desktop, let viewer { try? viewer.send(WireMessage(.desktop, value: desktop)) } }
+    private func configure(_ configuration: ConfigureDisplay) throws {
+        guard configuration.valid, let hello, let desktop else { throw ScreenerError.message("Unsupported streaming settings.") }
+        guard desktop.modes.contains(where: { $0.id == configuration.modeID }) else { throw ScreenerError.message("That display resolution is no longer available.") }
+        let updated = ClientHello(name: hello.name, fps: configuration.framesPerSecond ?? hello.framesPerSecond,
+            bitrate: configuration.megabitsPerSecond ?? hello.megabitsPerSecond)
+        let changed = configuration.modeID != desktop.currentMode || updated.framesPerSecond != hello.framesPerSecond
+            || updated.megabitsPerSecond != hello.megabitsPerSecond
+        if configuration.modeID != desktop.currentMode { try displayManager.setMode(configuration.modeID, on: selectedDisplay) }
+        self.hello = updated
+        refresh(restartStream: false)
+        sendDesktop()
+        if changed { Task { await restartCapture() } }
+    }
+    private func sendDesktop() {
+        guard let desktop, let viewer else { return }
+        let info = DesktopInfo(name: desktop.name, streamWidth: desktop.streamWidth, streamHeight: desktop.streamHeight,
+            logicalWidth: desktop.logicalWidth, logicalHeight: desktop.logicalHeight, currentMode: desktop.currentMode,
+            modes: desktop.modes, framesPerSecond: hello?.framesPerSecond, megabitsPerSecond: hello?.megabitsPerSecond)
+        try? viewer.send(WireMessage(.desktop, value: info))
+    }
     private func sendFailure(_ text: String) { if let viewer { try? viewer.send(WireMessage(.failure, value: text)) } }
     private func restartCapture() async {
         generation += 1; let current = generation

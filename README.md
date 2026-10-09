@@ -22,6 +22,8 @@ Click the remote desktop to focus it. **Control–Option–Esc** releases remote
 
 **Transparent Mode** is enabled by default in the Client's **View** menu. In full screen it hides Screener's controls, title bar, local menu bar and Dock, and shows only the remote desktop and its cursor. **Control–Option–T** toggles the mode. **Control–Option–Esc** exits transparent full screen and releases keyboard focus so you can return to the local controls. Local window controls and cursor visibility are restored when you leave the mode, switch apps or disconnect. Video retains the remote display's aspect ratio.
 
+**Session Controls** opens on the regular macOS desktop before entering transparent full screen. It stays in its own Space while the remote desktop remains full screen. Use **Control–Option–S** to switch to the controls and back, or open **View → Session Controls…** and use **Return to Desktop**. You can also move the controls to another desktop in Mission Control. The window shares the current connection and lets you change resolution, video settings, Transparent Mode, keyboard shortcuts, automatic reconnect and clipboard transfers. Resolution changes apply immediately; choose **Apply Video Settings** to change frame rate or quality with a brief video pause and no disconnect. Live video settings require Server 0.1.2 or later; resolution controls also work with older servers.
+
 Use a stable LAN connection. Wired Ethernet on the mini is recommended. TCP port **49555** must be reachable; discovery uses Bonjour `_screener._tcp`. There is no cloud service or relay. Do not expose the server directly to the public internet.
 
 ## Display scaling

@@ -6,13 +6,16 @@ import ScreenerCore
 @main struct ScreenerClientApp: App {
     @StateObject private var model = ClientModel()
     @StateObject private var updater = UpdateController()
+    @StateObject private var sessionWindows = SessionControlsWindowController()
     var body: some Scene {
-        WindowGroup("Screener", id: "client") { ClientView(model: model).frame(minWidth: 780, minHeight: 540) }
+        WindowGroup("Screener", id: "client") { ClientView(model: model, sessionWindows: sessionWindows).frame(minWidth: 780, minHeight: 540) }
             .defaultSize(width: 1200, height: 800)
             .commands {
                 UpdateCommands(updater: updater)
                 CommandGroup(replacing: .newItem) { }
                 CommandMenu("View") {
+                    Button("Session Controls…") { sessionWindows.toggle(model: model) }
+                        .keyboardShortcut("s", modifiers: [.control, .option])
                     Toggle("Transparent Mode", isOn: $model.transparentMode)
                         .keyboardShortcut("t", modifiers: [.control, .option])
                 }
@@ -27,6 +30,7 @@ import ScreenerCore
 }
 private struct ClientView: View {
     @ObservedObject var model: ClientModel
+    let sessionWindows: SessionControlsWindowController
     @StateObject private var windowState = ClientWindowState()
     private var transparent: Bool { model.transparentMode && windowState.fullScreen && model.connected }
     var body: some View {
@@ -37,6 +41,7 @@ private struct ClientView: View {
                     Image(systemName: "display.2").foregroundStyle(.teal)
                     VStack(alignment: .leading, spacing: 2) { Text(model.desktop?.name ?? model.host).font(.callout.weight(.semibold)); Text(model.status).font(.caption).foregroundStyle(.secondary) }
                     Spacer()
+                    Button { sessionWindows.show(model: model) } label: { Image(systemName: "slider.horizontal.3") }.help("Session Controls (Control–Option–S)")
                     if let desktop = model.desktop {
                         Picker("Scaling", selection: Binding(get: { desktop.currentMode }, set: { model.setScaling($0) })) {
                             ForEach(desktop.modes) { mode in Text(mode.label).tag(mode.id) }
@@ -49,7 +54,7 @@ private struct ClientView: View {
                 }.padding(14).background(.bar)
                 }
                 ZStack {
-                    RemoteDesktop(model: model, transparent: transparent)
+                    RemoteDesktop(model: model, transparent: transparent, showSessionControls: { sessionWindows.show(model: model) })
                     if model.image == nil { VStack(spacing: 12) { ProgressView(); Text(model.status).foregroundStyle(.secondary) }.padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)) }
                 }
                 if !transparent {
@@ -67,9 +72,17 @@ private struct ClientView: View {
             }
         }
         .ignoresSafeArea(transparent ? .container : [], edges: .all)
-        .background(ClientWindowReader(state: windowState))
+        .background(ClientWindowReader(state: windowState, onWindowChanged: { sessionWindows.attachDesktop($0) }))
+        .onAppear {
+            windowState.onWillEnterFullScreen = {
+                if model.transparentMode, model.connected { sessionWindows.show(model: model, activate: false) }
+            }
+        }
         .onChange(of: transparent) { _, enabled in
-            if enabled { model.captureShortcuts = true }
+            if enabled {
+                model.captureShortcuts = true
+                sessionWindows.show(model: model, activate: false)
+            }
             windowState.setTransparent(enabled)
         }
     }

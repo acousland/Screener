@@ -8,6 +8,8 @@ Compiled both arm64 applications locally in Debug and Release using Xcode 27.0 o
 
 The 0.1.1 unrestricted local test run completed **13 passing tests, no skips and no failures**. This includes encrypted/authenticated TLS loopback, rejection of a client with the wrong connection key, delivery of a session rejection before disconnecting, and hardware 3840 × 2160 H.264 encode/decode. The protocol, bounds, geometry, queue-capacity and malformed-video checks also pass. See `.build/test-transparent-mode.log` locally for the exact results.
 
+The 0.1.2 local test run completed **16 passing tests, no skips and no failures**. The additional tests validate live frame-rate/bitrate bounds and compatibility of the extended configuration and desktop messages with older resolution-only messages. See `.build/test-session-controls.log` locally. The separate Session Controls window and live settings handling compile locally in both applications. The controls use an ordinary managed window without full-screen auxiliary or all-Spaces behavior, and open before the viewer's full-screen transition. Live Space switching, focus restoration and capture restart after video-setting changes still need validation on the target Macs.
+
 The rejection regression test failed against the 0.1.0 send-then-cancel behavior: the client received no failure message. It passes after the graceful close fix, including when the server releases its reference to the rejected connection. The user subsequently confirmed that their connection works with 0.1.0; the precise original rejection reason was not established.
 
 Transparent Mode compiles locally in the Client. It hides client chrome in full screen, suppresses local menu/Dock presentation and the duplicate cursor only while the remote desktop is active, and provides Control–Option–T / Control–Option–Esc controls. Live visual validation of full-screen transitions, cursor restoration and the shortcuts on the MacBook remains outstanding.
@@ -28,6 +30,7 @@ All compilation, tests, signing and release preparation run locally. No GitHub A
 
 - Stream framing across arbitrary packet boundaries, malformed lengths and unknown message types.
 - Video packet timestamps, input bounds, letterboxing/coordinate conversion, connection-key parsing, and supported session settings.
+- Optional live video settings, rejection of invalid rates, and compatibility with older resolution-only configuration/desktop messages.
 - TLS loopback with matching keys, and rejection of a client with the wrong key.
 - Delivery of the Server's final error before a rejected connection closes, with the reason preserved on the client.
 - Hardware 3840 × 2160 H.264 encode/decode and rejection of invalid video configurations.
@@ -47,5 +50,7 @@ These checks require the M4 mini and M1 Pro MacBook with the necessary macOS per
 8. Measure capture/encode/network/decode latency, frame rate and text quality at 25/45/75 Mbps. The current UI reports a target frame rate, not a measured value.
 9. Check Open at Login and behaviour after logout/restart. The server does not provide FileVault or login-window access.
 10. Install a newer signed build through each Sparkle feed and verify the correct app is updated with its settings preserved.
+11. Enter transparent full screen; confirm Session Controls remains on the regular desktop. Use Control–Option–S, trackpad Space switching and Return to Desktop without leaving full screen or disconnecting. Close/reopen and move the controls to another Space using Mission Control. Check menu/Dock/cursor restoration and absence of stuck keys when focus changes.
+12. Change resolution, then apply 30/60 fps and 25/45/75 Mbps from Session Controls. Confirm capture resumes with the requested settings and the same connection. Connect the new Client to an older Server and confirm unsupported live video controls are disabled while resolution controls remain available.
 
 Record results and OS build numbers here before claiming the release is validated on the target pair.

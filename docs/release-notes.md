@@ -1,15 +1,15 @@
-Adds Transparent Mode for full screen: only the remote desktop is visible, with Screener's controls, title bar, local menu bar, Dock and duplicate local cursor hidden. The preference is enabled by default and can be changed in **View → Transparent Mode**.
+Adds a separate **Session Controls** window for use on another macOS desktop/Space while the remote desktop stays in transparent full screen. The controls open on the regular desktop before entering transparent full screen, and can be moved with Mission Control.
 
-Use **Control–Option–T** to toggle Transparent Mode, or **Control–Option–Esc** to leave transparent full screen and return to local controls. Normal window controls and cursor visibility return when you switch apps, disconnect or leave the mode. The remote display's aspect ratio is preserved.
+Use **Control–Option–S** to switch between the remote desktop and its controls, or choose **View → Session Controls…** and **Return to Desktop**. Closing the controls does not disconnect the session; the shortcut reopens them.
 
-Also fixes connection failures that previously appeared only as “The other Mac disconnected.”
+- Change resolution during the session.
+- Change frame rate and quality with **Apply Video Settings**. Video pauses briefly while capture restarts; the connection remains open.
+- Change Transparent Mode, keyboard shortcut forwarding and automatic reconnect.
+- Transfer clipboard text, view errors or disconnect.
 
-- The Server sends the rejection or capture failure before closing the connection.
-- Both applications display the reason, including missing Screen Recording permission or an unavailable monitor.
-- The Client preserves message order and stops automatically retrying a rejected session.
-- The Server records session errors in the macOS log and includes its screen-capture usage description.
+Update **both Server and Client** to 0.1.2 for live frame-rate and quality changes. A new Client connected to an older Server still supports resolution changes and disables unsupported live video controls. The connection key is unchanged by this update.
 
-On the mini, grant Screener Server Screen Recording permission in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen the Server. The connection key is unchanged by this update.
+Transparent Mode keeps the remote window's controls hidden while the settings window has focus. The local menu bar, Dock and cursor return for the controls. **Control–Option–T** toggles Transparent Mode; **Control–Option–Esc** still exits transparent full screen.
 
 Apple High Performance Screen Sharing can remove Screener’s virtual monitor and leave its fixed identity unavailable. Use Standard Screen Sharing while setting up Screener. Recovery from that virtual-display conflict remains a known limitation.
 

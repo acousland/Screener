@@ -3,8 +3,10 @@ import SwiftUI
 
 @MainActor final class ClientWindowState: ObservableObject {
     @Published private(set) var fullScreen = false
+    var onWillEnterFullScreen: (() -> Void)?
     private weak var window: NSWindow?
     private var observers: [NSObjectProtocol] = []
+    private var spaceObserver: NSObjectProtocol?
     private var transparent = false
     private var savedPresentation: NSApplication.PresentationOptions?
     private var savedTitle: NSWindow.TitleVisibility?
@@ -17,16 +19,20 @@ import SwiftUI
         restore()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
+        if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
+        spaceObserver = nil
         self.window = window
         fullScreen = window?.styleMask.contains(.fullScreen) == true
         guard let window else { return }
-        for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+        for name in [NSWindow.willEnterFullScreenNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
                      NSWindow.willExitFullScreenNotification, NSWindow.didBecomeKeyNotification,
                      NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if note.name == NSWindow.willExitFullScreenNotification || note.name == NSWindow.willCloseNotification {
+                    if note.name == NSWindow.willEnterFullScreenNotification {
+                        self.onWillEnterFullScreen?()
+                    } else if note.name == NSWindow.willExitFullScreenNotification || note.name == NSWindow.willCloseNotification {
                         self.fullScreen = false; self.restore()
                     } else {
                         self.fullScreen = window.styleMask.contains(.fullScreen)
@@ -41,15 +47,17 @@ import SwiftUI
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.apply() }
         })
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.apply() }
+        }
         apply()
     }
 
     func setTransparent(_ enabled: Bool) { transparent = enabled; apply() }
 
     private func apply() {
-        guard transparent, fullScreen, NSApp.isActive, let window, window.isKeyWindow else { restore(); return }
-        if savedPresentation == nil {
-            savedPresentation = NSApp.presentationOptions
+        guard transparent, fullScreen, let window else { restore(); return }
+        if savedTitle == nil {
             savedTitle = window.titleVisibility
             savedTitlebarTransparency = window.titlebarAppearsTransparent
             savedFullSizeContent = window.styleMask.contains(.fullSizeContentView)
@@ -62,16 +70,22 @@ import SwiftUI
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         savedButtons.forEach { $0.0.isHidden = true }
+        guard NSApp.isActive, window.isKeyWindow, window.isOnActiveSpace else { restorePresentation(); return }
+        if savedPresentation == nil { savedPresentation = NSApp.presentationOptions }
         var presentation = NSApp.presentationOptions
         presentation.subtract([.autoHideMenuBar, .autoHideDock, .autoHideToolbar])
         presentation.formUnion([.hideMenuBar, .hideDock])
         NSApp.presentationOptions = presentation
     }
 
-    private func restore() {
+    private func restorePresentation() {
         guard let presentation = savedPresentation else { return }
         NSApp.presentationOptions = presentation
         savedPresentation = nil
+    }
+
+    private func restore() {
+        restorePresentation()
         if let window, let title = savedTitle {
             window.titleVisibility = title
             window.titlebarAppearsTransparent = savedTitlebarTransparency
@@ -82,13 +96,19 @@ import SwiftUI
     }
 
     func detach() { attach(nil) }
-    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
+    }
 }
 
 struct ClientWindowReader: NSViewRepresentable {
     let state: ClientWindowState
+    var onWindowChanged: ((NSWindow?) -> Void)?
     func makeNSView(context: Context) -> ReaderView {
-        let view = ReaderView(); view.onWindowChanged = { [weak state] in state?.attach($0) }; return view
+        let view = ReaderView()
+        view.onWindowChanged = { [weak state] window in state?.attach(window); onWindowChanged?(window) }
+        return view
     }
     func updateNSView(_ view: ReaderView, context: Context) { }
     static func dismantleNSView(_ view: ReaderView, coordinator: ()) { view.onWindowChanged?(nil) }

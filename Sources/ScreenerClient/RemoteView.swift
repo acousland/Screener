@@ -10,6 +10,7 @@ import ScreenerCore
         if let remote = keyWindow?.firstResponder as? RemoteView, event.type == .keyDown,
             event.modifierFlags.intersection([.control, .option, .command, .shift]) == [.control, .option] {
             if event.keyCode == 17 { remote.onToggleTransparent?(); return }
+            if event.keyCode == 1 { remote.onShowSessionControls?(); return }
             if event.keyCode == 53 {
                 let exitFullScreen = remote.transparent
                 remote.releaseFocus()
@@ -33,6 +34,7 @@ final class RemoteView: MTKView, MTKViewDelegate {
     var capturesShortcuts = true
     var onReleaseFocus: (() -> Void)?
     var onToggleTransparent: (() -> Void)?
+    var onShowSessionControls: (() -> Void)?
     var transparent = false
     private var cursorHidden = false
     private var windowObservers: [NSObjectProtocol] = []
@@ -182,6 +184,7 @@ final class RemoteView: MTKView, MTKViewDelegate {
 struct RemoteDesktop: NSViewRepresentable {
     @ObservedObject var model: ClientModel
     var transparent: Bool
+    var showSessionControls: () -> Void
     func makeNSView(context: Context) -> RemoteView {
         let view = RemoteView(); view.sendInput = { [weak model] event in model?.sendInput(event) }
         view.onReleaseFocus = { [weak model] in model?.captureShortcuts = false }
@@ -190,6 +193,7 @@ struct RemoteDesktop: NSViewRepresentable {
     }
     func updateNSView(_ view: RemoteView, context: Context) {
         view.capturesShortcuts = model.captureShortcuts
+        view.onShowSessionControls = showSessionControls
         view.setTransparent(transparent)
         view.update(image: model.image)
     }

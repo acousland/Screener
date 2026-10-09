@@ -60,4 +60,31 @@ final class ProtocolTests: XCTestCase {
         XCTAssertTrue(budget.reserve()); XCTAssertTrue(budget.reserve()); XCTAssertFalse(budget.reserve())
         budget.release(); XCTAssertTrue(budget.reserve()); XCTAssertFalse(budget.reserve())
     }
+    func testLiveConfigurationValidatesOptionalStreamSettings() throws {
+        XCTAssertTrue(ConfigureDisplay(modeID: 42).valid)
+        let config = ConfigureDisplay(modeID: 42, fps: 30, bitrate: 75)
+        let decoded = try WireMessage(.configure, value: config).decode(ConfigureDisplay.self)
+        XCTAssertEqual(decoded.modeID, 42); XCTAssertEqual(decoded.framesPerSecond, 30); XCTAssertEqual(decoded.megabitsPerSecond, 75)
+        XCTAssertTrue(decoded.valid)
+        for config in [ConfigureDisplay(modeID: 42, fps: 0), ConfigureDisplay(modeID: 42, fps: 240),
+            ConfigureDisplay(modeID: 42, bitrate: 9), ConfigureDisplay(modeID: 42, fps: 60, bitrate: 101)] { XCTAssertFalse(config.valid) }
+    }
+    func testConfigurationRemainsCompatibleWithResolutionOnlyMessages() throws {
+        let legacy = try WireMessage(.configure, payload: Data(#"{"modeID":42}"#.utf8)).decode(ConfigureDisplay.self)
+        XCTAssertEqual(legacy.modeID, 42); XCTAssertNil(legacy.framesPerSecond); XCTAssertNil(legacy.megabitsPerSecond); XCTAssertTrue(legacy.valid)
+        struct LegacyConfiguration: Decodable { let modeID: Int32 }
+        let compatible = try WireMessage(.configure, value: ConfigureDisplay(modeID: 42, fps: 30, bitrate: 25)).decode(LegacyConfiguration.self)
+        XCTAssertEqual(compatible.modeID, 42)
+    }
+    func testDesktopAdvertisesLiveControlsWithoutBreakingOlderMessages() throws {
+        let original = DesktopInfo(name: "Mini", streamWidth: 3840, streamHeight: 2160, logicalWidth: 1920, logicalHeight: 1080, currentMode: 42, modes: [])
+        let legacy = try WireMessage(.desktop, value: original).decode(DesktopInfo.self)
+        XCTAssertNil(legacy.framesPerSecond); XCTAssertNil(legacy.megabitsPerSecond)
+        let updated = DesktopInfo(name: "Mini", streamWidth: 3840, streamHeight: 2160, logicalWidth: 1920, logicalHeight: 1080, currentMode: 42, modes: [], framesPerSecond: 60, megabitsPerSecond: 45)
+        let current = try WireMessage(.desktop, value: updated).decode(DesktopInfo.self)
+        XCTAssertEqual(current.framesPerSecond, 60); XCTAssertEqual(current.megabitsPerSecond, 45)
+        struct LegacyDesktop: Decodable { let currentMode: Int32; let streamWidth: Int }
+        let compatible = try WireMessage(.desktop, value: updated).decode(LegacyDesktop.self)
+        XCTAssertEqual(compatible.currentMode, 42); XCTAssertEqual(compatible.streamWidth, 3840)
+    }
 }

@@ -80,12 +80,26 @@ public struct DesktopInfo: Codable {
     public let logicalHeight: Int
     public let currentMode: Int32
     public let modes: [DisplayModeInfo]
-    public init(name: String, streamWidth: Int, streamHeight: Int, logicalWidth: Int, logicalHeight: Int, currentMode: Int32, modes: [DisplayModeInfo]) {
+    public let framesPerSecond: Int?
+    public let megabitsPerSecond: Int?
+    public init(name: String, streamWidth: Int, streamHeight: Int, logicalWidth: Int, logicalHeight: Int, currentMode: Int32, modes: [DisplayModeInfo], framesPerSecond: Int? = nil, megabitsPerSecond: Int? = nil) {
         self.name = name; self.streamWidth = streamWidth; self.streamHeight = streamHeight
         self.logicalWidth = logicalWidth; self.logicalHeight = logicalHeight; self.currentMode = currentMode; self.modes = modes
+        self.framesPerSecond = framesPerSecond; self.megabitsPerSecond = megabitsPerSecond
     }
 }
-public struct ConfigureDisplay: Codable { public let modeID: Int32; public init(modeID: Int32) { self.modeID = modeID } }
+public struct ConfigureDisplay: Codable {
+    public let modeID: Int32
+    public let framesPerSecond: Int?
+    public let megabitsPerSecond: Int?
+    public init(modeID: Int32, fps: Int? = nil, bitrate: Int? = nil) {
+        self.modeID = modeID; framesPerSecond = fps; megabitsPerSecond = bitrate
+    }
+    public var valid: Bool {
+        (framesPerSecond.map { [30, 60].contains($0) } ?? true)
+        && (megabitsPerSecond.map { (10...100).contains($0) } ?? true)
+    }
+}
 public struct VideoFormat: Codable {
     public let parameterSets: [Data]
     public init(parameterSets: [Data]) { self.parameterSets = parameterSets }

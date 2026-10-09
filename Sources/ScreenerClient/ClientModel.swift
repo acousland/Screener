@@ -21,6 +21,7 @@ struct DiscoveredServer: Identifiable {
     @Published var error: String?
     @Published var fps = 60
     @Published var bitrate = 45
+    @Published private(set) var applyingStreamSettings = false
     @Published var captureShortcuts = true
     @Published var reconnectAutomatically = true
     @Published var receivedFrames = 0
@@ -81,7 +82,7 @@ struct DiscoveredServer: Identifiable {
         } catch { self.error = error.localizedDescription }
     }
     private func begin(endpoint: NWEndpoint, secret: PairingSecret) {
-        connecting = true; connected = false; status = "Connecting securely…"; desktop = nil; image = nil; serverFailure = nil
+        connecting = true; connected = false; status = "Connecting securely…"; desktop = nil; image = nil; serverFailure = nil; applyingStreamSettings = false
         let peer = PeerConnection(endpoint: endpoint, secret: secret); self.peer = peer
         let decoder = VideoDecoder(); self.decoder = decoder
         let peerID = ObjectIdentifier(peer)
@@ -111,7 +112,7 @@ struct DiscoveredServer: Identifiable {
         }
         peer.onClose = { [weak self, weak peer] reason in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
-            self.peer = nil; self.connected = false; self.connecting = false; self.image = nil; self.desktop = nil
+            self.peer = nil; self.connected = false; self.connecting = false; self.image = nil; self.desktop = nil; self.applyingStreamSettings = false
             let decoder = self.decoder; self.decoder = nil; self.decodeQueue.async { decoder?.invalidate() }
             self.status = "Disconnected"; if let reason { self.error = reason }
             let rejected = reason != nil && reason == self.serverFailure
@@ -137,12 +138,19 @@ struct DiscoveredServer: Identifiable {
                 let info = try message.decode(DesktopInfo.self)
                 guard info.streamWidth > 0, info.streamWidth <= 3840, info.streamHeight > 0, info.streamHeight <= 2160,
                     info.logicalWidth > 0, info.logicalHeight > 0, info.modes.count <= 200 else { throw ScreenerError.message("Invalid desktop configuration.") }
+                guard ConfigureDisplay(modeID: info.currentMode, fps: info.framesPerSecond, bitrate: info.megabitsPerSecond).valid else {
+                    throw ScreenerError.message("Invalid desktop streaming settings.")
+                }
                 desktop = info; connected = true; connecting = false
-                status = "\(info.streamWidth) × \(info.streamHeight) · \(fps) fps target"
+                if let value = info.framesPerSecond { fps = value }
+                if let value = info.megabitsPerSecond { bitrate = value }
+                applyingStreamSettings = false
+                status = "\(info.streamWidth) × \(info.streamHeight) · \(info.framesPerSecond ?? fps) fps target"
                 UserDefaults.standard.set(host, forKey: "lastHost")
                 do { try SecretStore.save(secret, account: "client:\(host)") }
                 catch { self.error = "Connected. The key could not be saved: \(error.localizedDescription)" }
             case .failure:
+                applyingStreamSettings = false
                 let text = String(try message.decode(String.self).prefix(2000)); error = text; serverFailure = text
                 if !connected { userDisconnected = true; disconnect(); error = text }
             case .clipboard:
@@ -156,7 +164,7 @@ struct DiscoveredServer: Identifiable {
         userDisconnected = true; reconnectTask?.cancel(); reconnectTask = nil
         let peer = peer; self.peer = nil; peer?.close()
         let decoder = decoder; self.decoder = nil; decodeQueue.async { decoder?.invalidate() }
-        connected = false; connecting = false; image = nil; desktop = nil; status = "Disconnected"
+        connected = false; connecting = false; image = nil; desktop = nil; status = "Disconnected"; applyingStreamSettings = false
     }
     private func scheduleReconnect() {
         guard let endpoint = savedEndpoint, let secret = savedSecret, retryAttempt < 5 else { return }
@@ -171,6 +179,15 @@ struct DiscoveredServer: Identifiable {
     func sendInput(_ input: InputEvent) { if connected, input.valid { try? peer?.send(WireMessage(.input, value: input)) } }
     func setScaling(_ mode: Int32) {
         if desktop?.modes.contains(where: { $0.id == mode }) == true { try? peer?.send(WireMessage(.configure, value: ConfigureDisplay(modeID: mode))) }
+    }
+    var supportsLiveStreamSettings: Bool { desktop?.framesPerSecond != nil && desktop?.megabitsPerSecond != nil }
+    var streamSettingsChanged: Bool { supportsLiveStreamSettings && (desktop?.framesPerSecond != fps || desktop?.megabitsPerSecond != bitrate) }
+    func applyStreamSettings() {
+        guard connected, supportsLiveStreamSettings, streamSettingsChanged, !applyingStreamSettings, let desktop, let peer else { return }
+        do {
+            try peer.send(WireMessage(.configure, value: ConfigureDisplay(modeID: desktop.currentMode, fps: fps, bitrate: bitrate)))
+            applyingStreamSettings = true; error = nil
+        } catch { self.error = error.localizedDescription }
     }
     func sendClipboard() {
         guard let text = NSPasteboard.general.string(forType: .string), text.utf8.count <= 128 * 1024 else { error = "Copy some text first (up to 128 KB)."; return }
