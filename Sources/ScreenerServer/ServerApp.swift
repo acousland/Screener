@@ -4,8 +4,13 @@ import ScreenerUI
 import ScreenerCore
 
 @main struct ScreenerServerApp: App {
-    @StateObject private var model = ServerModel()
-    @StateObject private var updater = UpdateController()
+    @StateObject private var model: ServerModel
+    @StateObject private var updater: UpdateController
+    init() {
+        let updater = UpdateController(remoteManaged: true)
+        let model = ServerModel(); model.attachUpdater(updater)
+        _model = StateObject(wrappedValue: model); _updater = StateObject(wrappedValue: updater)
+    }
     var body: some Scene {
         WindowGroup("Screener Server", id: "server") { ServerView(model: model).frame(minWidth: 590, minHeight: 670) }
             .defaultSize(width: 650, height: 760)
@@ -25,7 +30,7 @@ private struct ServerMenu: View {
         if model.running || model.starting { Button("Stop Server") { model.stop() } }
         else { Button("Start Server") { Task { await model.start() } } }
         Button("Check for Updates…") { updater.check() }.disabled(!updater.available)
-        Divider(); Button("Quit Screener Server") { model.stop(); NSApp.terminate(nil) }
+        Divider(); Button("Quit Screener Server") { model.stop(persist: false); NSApp.terminate(nil) }
     }
 }
 private struct ServerView: View {
@@ -50,7 +55,7 @@ private struct ServerView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
                             Picker("Share", selection: Binding(get: { model.selectedDisplay }, set: { model.chooseDisplay($0) })) {
-                                if model.displays.isEmpty { Text("Create a virtual monitor").tag(UInt32(0)) }
+                                if model.selectedDisplay == 0 { Text("Choose or create a monitor").tag(UInt32(0)) }
                                 ForEach(model.displays) { display in Text(display.name).tag(display.id) }
                             }
                             Button("Create Virtual Monitor") { model.createVirtual() }
@@ -71,14 +76,17 @@ private struct ServerView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         LabeledContent("Address", value: "\(model.networkAddress):\(SecureParameters.port)")
                             .textSelection(.enabled)
-                        Text("Open Screener Client, choose this mini, and paste its connection key.").font(.callout).foregroundStyle(.secondary)
+                        Text("Pair once, then create screens and manage this mini from the MacBook.").font(.callout).foregroundStyle(.secondary)
                         HStack {
+                            Button("Copy Pairing Invitation") { model.copyPairingInvitation() }.disabled(!model.running || model.secretCode.isEmpty)
                             Button("Copy Connection Key") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.secretCode, forType: .string) }
                                 .disabled(model.secretCode.isEmpty)
                             Button(model.keyVisible ? "Hide Key" : "Show Key") { model.keyVisible.toggle() }.disabled(model.secretCode.isEmpty)
                             Spacer(); Button("New Key") { model.rotateKey() }.disabled(model.clientName != nil || model.secretCode.isEmpty)
                         }
                         if model.keyVisible { Text(model.secretCode).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+                        Text("In Client, choose Paste Pairing Invitation. The invitation grants screen and settings access; share it only with your MacBook. New Key revokes all previous invitations and saved pairings.")
+                            .font(.caption).foregroundStyle(.secondary)
                         if model.clientName != nil { Button("Disconnect MacBook") { model.disconnectViewer() } }
                     }.padding(10)
                 }
@@ -91,6 +99,14 @@ private struct ServerView: View {
                         Toggle("Open at Login", isOn: Binding(get: { model.loginItem }, set: { model.setLoginItem($0) }))
                         Text("Run the server in your logged-in desktop session. After granting Screen Recording, macOS may ask you to quit and reopen it.").font(.caption).foregroundStyle(.secondary)
                     }.padding(10)
+                }
+                if let update = model.serverUpdate, update.phase != .idle {
+                    GroupBox("Server Update") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(update.message).font(.callout)
+                            if let progress = update.progress, update.busy { ProgressView(value: progress) }
+                        }.padding(10)
+                    }
                 }
                 HStack {
                     Text("Encrypted · local network · Apple silicon").font(.caption).foregroundStyle(.secondary)

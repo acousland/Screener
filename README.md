@@ -13,10 +13,18 @@ The initial implementation targets Apple silicon and macOS 15+. The intended tes
 
 1. Download both application archives from the [Releases page](https://github.com/acousland/Screener/releases).
 2. Move Screener Server to `/Applications` on the mini and Screener Client to `/Applications` on the MacBook.
-3. On the mini, create the virtual monitor and choose your desktop scaling. The same modes are available in macOS System Settings → Displays.
-4. Grant Screen & System Audio Recording to capture the desktop and sound, and Accessibility for remote keyboard/mouse control. Reopen the Server if macOS requests it.
-5. Start the Server and copy its connection key.
-6. On the MacBook, select the nearby server or enter its `.local` hostname/IP address, paste the key, and connect.
+3. Open Server in the mini's logged-in desktop session. It starts listening without creating a monitor; choose Start Server if previously stopped.
+4. Grant Screen & System Audio Recording to capture the desktop and sound, and Accessibility for remote keyboard/mouse control. Reopen Server if macOS requests it. These one-time steps can also be done through macOS **Standard** Screen Sharing.
+5. Choose **Copy Pairing Invitation** on Server, then **Paste Pairing Invitation** on the MacBook's Client. The existing nearby-server/address and connection-key fields also work.
+6. Choose **Connect & Start Screen** to create the virtual monitor and start viewing from the MacBook, or **Set Up Server Without Viewing** to choose a screen, resolution and preferences first. Pairing saves the full key in Keychain only after authentication succeeds; use **Paired minis** on subsequent connections.
+
+With both apps at **0.1.6**, the Client's Server Setup screen and **Session Controls → Mini** let you change the mini's Open at Login and clipboard preferences and inspect its permissions. **Open on Mini** opens the appropriate macOS permission page on the mini; approval must still happen there. Open at Login keeps Server listening after the mini logs into the same account, with no virtual monitor required until you request one. Login Items approval, when required by macOS, is reported rather than assumed granted. Server must already be installed and running; Client cannot start an app that has quit, wake a powered-off Mac or unlock FileVault.
+
+**Stop Viewing** ends capture and releases remote input while keeping the authenticated setup connection available. It preserves the virtual monitor. Use **Start Screen** to resume, or **Disconnect** to close the connection. Only one MacBook can control or view Server at a time. Older Servers still stream on connection; update both apps for setup without viewing.
+
+**Session Controls → Server Updates → Update & Restart Server** checks the mini's signed Sparkle feed and installs the latest compatible update, including a version previously skipped on the mini. The Client reports download/preparation progress. Server ends capture, releases held input and restores its audio output before Sparkle installs and relaunches it. Client automatically reconnects after the restart, checks the reported build against the requested update and resumes viewing if it was active. This reconnect also runs when ordinary automatic reconnect is disabled. Background Server checks report available releases without leaving an update dialog blocking remote installation. Local Check for Updates remains available.
+
+Remote updating requires Server **0.1.6 or later**, so install this version once through the existing Server update menu or the release download. Server must be in a writable Applications folder; a read-only/translocated bundle or administrator-owned installation may require action on the mini. Sparkle continues to validate feed and archive signatures and handle installation itself. No remote shell, arbitrary download URL or credential forwarding is provided. If the mini does not return after the bounded reconnect attempts, Client reports the failure and lets you reconnect manually.
 
 Click the remote desktop to focus it. **Control–Option–Esc** releases remote keyboard shortcuts. Disconnecting or moving focus releases held keys/buttons. Clipboard text sharing is off by default; enable it on the Server and use the Client's clipboard menu to transfer text explicitly.
 
@@ -71,7 +79,7 @@ See [RELEASING.md](docs/RELEASING.md) for Developer ID signing, notarization, si
 
 H.264 4:2:0 SDR video, up to 4K output with optional 1440p/1080p caps, 30/60 fps targets, stereo system audio, one viewer, one shared display, keyboard/mouse input, manual clipboard text transfer and bounded automatic reconnect. File transfer, microphone forwarding, HDR, pre-login/FileVault unlock, multiple concurrent viewers and internet traversal are not implemented.
 
-The random 256-bit connection key is stored in Keychain and used for mutually authenticated TLS-PSK/AES-GCM. Rotating it disconnects existing connections; it must then be replaced on clients. Captured desktop pixels, audio and input are never sent before authentication. The protocol bounds message sizes and validates display/video/audio/input data.
+The random 256-bit connection key is stored in Keychain and used for mutually authenticated TLS-PSK/AES-GCM. A pairing invitation carries this same full-strength key and grants both viewing and server-management access; share it only with trusted Macs. Invitations are pasted directly into Client, without opening a browser or registering a URL handler. Saved pairing metadata contains names/addresses only; keys stay in Keychain. **New Key** on Server revokes all existing invitations and saved client keys; replace them on clients afterward. There are no short numeric pairing codes or unauthenticated management endpoints. Captured desktop pixels, audio, input and setup commands use the authenticated connection. Setup-only sessions cannot inject input or access clipboard text until viewing starts. The protocol bounds message sizes and validates display/video/audio/input and management data.
 
 ## Licence
 

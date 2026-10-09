@@ -3,6 +3,69 @@ import Network
 @testable import ScreenerCore
 
 final class TransportTests: XCTestCase {
+    func testAuthenticatedSetupStartStopAndUpdateShareOneConnection() throws {
+        if ProcessInfo.processInfo.environment["SCREENER_RESTRICTED_TESTS"] == "1" { throw XCTSkip("Local networking is unavailable.") }
+        let secret = try PairingSecret()
+        let listener = try NWListener(using: SecureParameters.make(secret: secret), on: .any)
+        let listening = expectation(description: "Management listener")
+        let completed = expectation(description: "Setup and update remain connected")
+        var server: PeerConnection?
+        var session = ServerSessionState()
+        var screen: DesktopInfo?
+        let queue = DispatchQueue(label: "Screener.test.setup")
+        listener.stateUpdateHandler = { if case .ready = $0 { listening.fulfill() } }
+        listener.newConnectionHandler = { connection in
+            let peer = PeerConnection(connection); server = peer
+            peer.onMessage = { message in
+                do {
+                    var completedRequest: UUID?
+                    var update: RemoteUpdateStatus?
+                    if message.kind == .hello {
+                        try session.greet(message.decode(ClientHello.self))
+                        XCTAssertFalse(session.viewing); XCTAssertFalse(session.allows(.input))
+                    } else {
+                        XCTAssertTrue(session.allows(message.kind))
+                        let command = try message.decode(ServerCommand.self)
+                        XCTAssertTrue(command.valid); completedRequest = command.requestID
+                        switch command.action {
+                        case .createVirtualScreen:
+                            screen = DesktopInfo(name: "Virtual", streamWidth: 3840, streamHeight: 2160, logicalWidth: 1920, logicalHeight: 1080, currentMode: 7, modes: [])
+                            XCTAssertFalse(session.viewing)
+                        case .startSession: try session.startViewing(); XCTAssertTrue(session.allows(.input))
+                        case .stopSession: session.stopViewing(); XCTAssertFalse(session.allows(.input))
+                        case .updateServer: update = RemoteUpdateStatus(.checking, message: "Checking signed feed")
+                        default: XCTFail("Unexpected setup command")
+                        }
+                    }
+                    let status = ServerStatus(name: "Mini", displays: screen == nil ? [] : [ManagedDisplay(id: 42, name: "Virtual", virtual: true)],
+                        selectedDisplay: screen == nil ? 0 : 42, desktop: screen, screenRecording: true, accessibility: true,
+                        openAtLogin: true, loginApprovalRequired: false, clipboardEnabled: false, sessionActive: session.viewing,
+                        update: update, completedRequest: completedRequest)
+                    peer.send(try WireMessage(.serverStatus, value: status))
+                } catch { XCTFail(error.localizedDescription) }
+            }
+            peer.start()
+        }
+        listener.start(queue: queue); defer { listener.cancel(); server?.close() }
+        wait(for: [listening], timeout: 5)
+        let client = PeerConnection(endpoint: .hostPort(host: "127.0.0.1", port: try XCTUnwrap(listener.port)), secret: secret)
+        let commands = [ServerCommand(.createVirtualScreen), ServerCommand(.startSession, streamSettings: ClientHello(name: "MacBook")), ServerCommand(.stopSession), ServerCommand(.updateServer)]
+        var response = 0
+        client.onReady = { client.send(try! WireMessage(.hello, value: ClientHello(name: "MacBook", manageServer: true))) }
+        client.onMessage = { message in
+            XCTAssertEqual(message.kind, .serverStatus)
+            guard let status = try? message.decode(ServerStatus.self) else { XCTFail("Missing setup status"); return }
+            XCTAssertTrue(status.valid)
+            XCTAssertEqual(status.sessionActive, response == 2)
+            if response > 0 { XCTAssertEqual(status.completedRequest, commands[response - 1].requestID) }
+            if response < commands.count { client.send(try! WireMessage(.serverCommand, value: commands[response])) }
+            else { XCTAssertEqual(status.update?.phase, .checking); completed.fulfill() }
+            response += 1
+        }
+        client.onClose = { _ in if response <= commands.count { XCTFail("Setup connection closed unexpectedly") } }
+        client.start(); defer { client.close() }
+        wait(for: [completed], timeout: 8)
+    }
     func testSystemAudioAndVideoShareAuthenticatedConnection() throws {
         if ProcessInfo.processInfo.environment["SCREENER_RESTRICTED_TESTS"] == "1" { throw XCTSkip("Local networking is unavailable.") }
         let secret = try PairingSecret()

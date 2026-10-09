@@ -13,6 +13,7 @@ var targets: [Target] = [
     .executableTarget(name: "ScreenerClient", dependencies: ["ScreenerCore", "ScreenerUI"], linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
     .executableTarget(name: "ScreenerDiagnostics", dependencies: ["ScreenerCore", "VirtualDisplayBridge"]),
     .testTarget(name: "ScreenerCoreTests", dependencies: ["ScreenerCore"]),
+    .testTarget(name: "ScreenerUITests", dependencies: ["ScreenerCore", "ScreenerUI", sparkleDependency]),
 ]
 if offline { targets.append(.binaryTarget(name: "Sparkle", path: "Vendor/Sparkle.xcframework")) }
 let package = Package(name: "Screener", platforms: [.macOS(.v15)],

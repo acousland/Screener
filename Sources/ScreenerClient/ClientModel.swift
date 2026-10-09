@@ -8,11 +8,21 @@ struct DiscoveredServer: Identifiable {
     let name: String
     let endpoint: NWEndpoint
 }
+struct PairedServer: Codable, Identifiable {
+    var id: String { host }
+    let host: String
+    let name: String
+}
 @MainActor final class ClientModel: ObservableObject {
     @Published var host = UserDefaults.standard.string(forKey: "lastHost") ?? ""
     @Published var connectionKey = ""
     @Published var servers: [DiscoveredServer] = []
     @Published var selectedServer = ""
+    @Published private(set) var pairedServers: [PairedServer] = []
+    @Published private(set) var linked = false
+    @Published private(set) var serverStatus: ServerStatus?
+    @Published private(set) var applyingServerCommand = false
+    @Published private(set) var serverUpdateResult: String?
     @Published var connected = false
     @Published var connecting = false
     @Published var desktop: DesktopInfo?
@@ -54,10 +64,21 @@ struct DiscoveredServer: Identifiable {
     private var savedSecret: PairingSecret?
     private var userDisconnected = false
     private var serverFailure: String?
+    private var desiredSession = false
+    private var pendingCommand: UUID?
+    private var commandTimeout: Task<Void, Never>?
+    private var greetingTimeout: Task<Void, Never>?
+    private var updatingServerBuild: String?
+    private var updateConnectionLost = false
+    private var selectedDisplayWasVirtual = true
+    private var preferredDisplayName: String?
     private let browseQueue = DispatchQueue(label: "Screener.discovery")
     private let decodeQueue = DispatchQueue(label: "Screener.decode", qos: .userInteractive)
     private let frames = LatestValueSlot<(PixelFrame, ObjectIdentifier)>()
     init() {
+        if let data = UserDefaults.standard.data(forKey: "pairedServers"), let saved = try? JSONDecoder().decode([PairedServer].self, from: data) {
+            pairedServers = Array(saved.filter { !$0.host.isEmpty && $0.host.count <= 255 && $0.name.count <= 100 }.prefix(32))
+        }
         if !host.isEmpty, let key = try? SecretStore.read(account: "client:\(host)") { connectionKey = key.code }
         let browser = NWBrowser(for: .bonjour(type: SecureParameters.serviceType, domain: nil), using: .tcp)
         browser.browseResultsChangedHandler = { [weak self] results, _ in Task { @MainActor in
@@ -66,6 +87,10 @@ struct DiscoveredServer: Identifiable {
                 guard case let .service(name, type, domain, _) = result.endpoint else { return nil }
                 return DiscoveredServer(id: "\(name).\(type).\(domain)", name: name, endpoint: result.endpoint)
             }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            if self.selectedServer.isEmpty, !self.linked, !self.connecting, !self.host.isEmpty {
+                let name = self.pairedServers.first(where: { $0.host == self.host })?.name ?? self.host
+                self.selectedServer = self.servers.first(where: { $0.name == name })?.id ?? ""
+            }
         } }
         browser.stateUpdateHandler = { [weak self] state in
             if case .failed(let error) = state { Task { @MainActor in self?.error = "Discovery unavailable: \(error.localizedDescription). You can enter the mini's address manually." } }
@@ -76,29 +101,41 @@ struct DiscoveredServer: Identifiable {
         selectedServer = id
         guard let server = servers.first(where: { $0.id == id }) else { return }
         host = server.name
-        if let key = try? SecretStore.read(account: "client:\(host)") { connectionKey = key.code }
+        connectionKey = (try? SecretStore.read(account: "client:\(host)"))?.code ?? ""
     }
-    func connect() {
-        guard !connected, !connecting else { return }
+    func selectPairedServer(_ saved: PairedServer) {
+        host = saved.host
+        selectedServer = servers.first(where: { $0.name == saved.name })?.id ?? ""
+        connectionKey = (try? SecretStore.read(account: "client:\(host)"))?.code ?? ""
+    }
+    func pastePairingInvitation() {
+        do {
+            let invitation = try PairingInvitation(text: NSPasteboard.general.string(forType: .string) ?? "")
+            host = invitation.host; connectionKey = invitation.secret.code
+            selectedServer = servers.first(where: { $0.name == invitation.name })?.id ?? ""
+            error = nil; status = "Ready to pair with \(invitation.name)"
+        } catch { self.error = error.localizedDescription }
+    }
+    func connect(autoStart: Bool = true) {
+        guard !linked, !connected, !connecting else { return }
         error = nil; userDisconnected = false; retryAttempt = 0; reconnectTask?.cancel()
+        desiredSession = autoStart; updatingServerBuild = nil; updateConnectionLost = false; serverUpdateResult = nil
         do {
             let secret = try PairingSecret(code: connectionKey)
             let endpoint: NWEndpoint
             if let server = servers.first(where: { $0.id == selectedServer }) { endpoint = server.endpoint }
             else {
-                let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty, trimmed.count <= 255, !trimmed.contains("/") else { throw ScreenerError.message("Enter the mini's IP address or .local hostname.") }
-                let parts = trimmed.split(separator: ":", omittingEmptySubsequences: false)
-                if parts.count == 2, let port = UInt16(parts[1]), port > 0, !parts[0].isEmpty {
-                    endpoint = .hostPort(host: NWEndpoint.Host(String(parts[0])), port: NWEndpoint.Port(rawValue: port)!)
-                } else { endpoint = .hostPort(host: NWEndpoint.Host(trimmed), port: NWEndpoint.Port(rawValue: SecureParameters.port)!) }
+                let address = try ServerAddress(host)
+                endpoint = .hostPort(host: NWEndpoint.Host(address.host), port: NWEndpoint.Port(rawValue: address.port)!)
             }
             savedEndpoint = endpoint; savedSecret = secret
             begin(endpoint: endpoint, secret: secret)
         } catch { self.error = error.localizedDescription }
     }
     private func begin(endpoint: NWEndpoint, secret: PairingSecret) {
-        connecting = true; connected = false; status = "Connecting securely…"; desktop = nil; image = nil; serverFailure = nil; applyingStreamSettings = false
+        connecting = true; connected = false; linked = false; serverStatus = nil
+        status = "Connecting securely…"; desktop = nil; image = nil; serverFailure = nil; applyingStreamSettings = false
+        clearPendingCommand()
         let peer = PeerConnection(endpoint: endpoint, secret: secret); self.peer = peer
         let decoder = VideoDecoder(); self.decoder = decoder
         audioPlaybackFailed = false
@@ -115,8 +152,14 @@ struct DiscoveredServer: Identifiable {
         }
         peer.onReady = { [weak self, weak peer] in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
-            self.status = "Starting desktop…"
-            try? peer.send(WireMessage(.hello, value: ClientHello(name: Host.current().localizedName ?? "MacBook", fps: self.fps, bitrate: self.bitrate, responsiveCursor: self.responsiveCursor, maximumVideoHeight: self.maximumVideoHeight, audioEnabled: self.audioEnabled, muteHostAudio: self.muteHostAudio)))
+            self.status = "Connecting to Server setup…"
+            try? peer.send(WireMessage(.hello, value: self.streamHello()))
+            self.greetingTimeout?.cancel()
+            self.greetingTimeout = Task {
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled, self.peer === peer, !self.linked, !self.connected else { return }
+                self.disconnect(); self.error = "Server did not respond. Check that it is running on the mini and update both apps."
+            }
         } }
         peer.onMessage = { [weak self, weak peer, weak decoder, weak audio] message in
             guard let self, let peer, let decoder else { return }
@@ -138,12 +181,15 @@ struct DiscoveredServer: Identifiable {
         }
         peer.onClose = { [weak self, weak peer] reason in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
-            self.peer = nil; self.connected = false; self.connecting = false; self.image = nil; self.desktop = nil; self.applyingStreamSettings = false; self.gameMouse = false
+            if self.updatingServerBuild != nil { self.updateConnectionLost = true }
+            self.peer = nil; self.connected = false; self.connecting = false; self.linked = false; self.serverStatus = nil
+            self.image = nil; self.desktop = nil; self.applyingStreamSettings = false; self.gameMouse = false
+            self.clearPendingCommand(); self.greetingTimeout?.cancel()
             let decoder = self.decoder; self.decoder = nil; self.decodeQueue.async { decoder?.invalidate() }
             self.audioPlayer?.stop(); self.audioPlayer = nil
-            self.status = "Disconnected"; if let reason { self.error = reason }
+            self.status = "Disconnected"; if let reason, self.updatingServerBuild == nil { self.error = reason }
             let rejected = reason != nil && reason == self.serverFailure
-            if !rejected && !self.userDisconnected && self.reconnectAutomatically { self.scheduleReconnect() }
+            if !rejected && !self.userDisconnected && (self.reconnectAutomatically || self.updatingServerBuild != nil) { self.scheduleReconnect() }
         } }
         peer.start()
     }
@@ -152,7 +198,7 @@ struct DiscoveredServer: Identifiable {
         guard frames.offer((frame, peerID)) else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, let (latest, source) = self.frames.take() else { return }
-            if let peer = self.peer, ObjectIdentifier(peer) == source {
+            if self.connected, self.desiredSession, let peer = self.peer, ObjectIdentifier(peer) == source {
                 self.cursorEmbedded = latest.cursorEmbedded
                 self.image = latest.buffer; self.receivedFrames += 1; self.retryAttempt = 0
             }
@@ -161,14 +207,54 @@ struct DiscoveredServer: Identifiable {
     private func receive(_ message: WireMessage, secret: PairingSecret) {
         do {
             switch message.kind {
+            case .serverStatus:
+                let info = try message.decode(ServerStatus.self)
+                guard info.valid else { throw ScreenerError.message("Invalid server setup status.") }
+                let first = !linked
+                linked = true; connecting = false; serverStatus = info; greetingTimeout?.cancel()
+                if info.completedRequest == pendingCommand, pendingCommand != nil { clearPendingCommand() }
+                if first {
+                    retryAttempt = 0
+                    rememberPairing(secret, name: info.name)
+                    if updateConnectionLost, let expectedBuild = updatingServerBuild {
+                        serverUpdateResult = info.build == expectedBuild ? "Server updated to \(info.version ?? "the new version")." : "Server reopened, but its version does not match the requested update. Try updating again."
+                        if info.build != expectedBuild { error = serverUpdateResult }
+                        updatingServerBuild = nil; updateConnectionLost = false
+                    }
+                    status = "Paired with \(info.name)"
+                    if desiredSession {
+                        if !selectedDisplayWasVirtual, let preferredDisplayName, let display = info.displays.first(where: { $0.name == preferredDisplayName }), display.id != info.selectedDisplay {
+                            resumeAfterScreenCreation = true; sendServerCommand(ServerCommand(.selectDisplay, displayID: display.id))
+                        } else if selectedDisplayWasVirtual, info.displays.contains(where: { $0.virtual }) == false, info.selectedDisplay != 0 {
+                            // A relaunched server needs a new virtual screen rather than silently sharing a physical one.
+                            resumeAfterScreenCreation = true; sendServerCommand(ServerCommand(.createVirtualScreen))
+                        } else { startScreen() }
+                    }
+                }
+                if let update = info.update, update.phase == .restarting { updatingServerBuild = update.targetBuild }
+                if !info.sessionActive {
+                    if connected {
+                        connected = false; desktop = nil; image = nil; gameMouse = false; audioPlayer?.setEnabled(false)
+                        let decoder = decoder; decodeQueue.async { decoder?.invalidate() }
+                    }
+                    if !first, !applyingServerCommand, desiredSession, info.update?.busy != true, pendingCommand == nil {
+                        // Resume only after the requested display setup has been acknowledged.
+                        if resumeAfterScreenCreation { resumeAfterScreenCreation = false; startScreen() }
+                    }
+                    if !connected, !desiredSession { status = "Ready to start a Screener screen" }
+                }
             case .desktop:
+                // Older servers ignore manageServer and start streaming immediately.
+                if serverStatus == nil { desiredSession = true }
+                guard desiredSession else { return }
                 let info = try message.decode(DesktopInfo.self)
                 guard info.streamWidth > 0, info.streamWidth <= 3840, info.streamHeight > 0, info.streamHeight <= 2160,
                     info.logicalWidth > 0, info.logicalHeight > 0, info.modes.count <= 200 else { throw ScreenerError.message("Invalid desktop configuration.") }
                 guard ConfigureDisplay(modeID: info.currentMode, fps: info.framesPerSecond, bitrate: info.megabitsPerSecond, maximumVideoHeight: info.maximumVideoHeight).valid else {
                     throw ScreenerError.message("Invalid desktop streaming settings.")
                 }
-                desktop = info; connected = true; connecting = false
+                desktop = info; connected = true; connecting = false; greetingTimeout?.cancel()
+                audioPlayer?.setEnabled(audioEnabled)
                 if let value = info.framesPerSecond { fps = value }
                 if let value = info.megabitsPerSecond { bitrate = value }
                 if let embedded = info.cursorEmbedded { responsiveCursor = !embedded }
@@ -182,13 +268,16 @@ struct DiscoveredServer: Identifiable {
                 if let mute = info.muteHostAudio { muteHostAudio = mute }
                 applyingStreamSettings = false
                 status = "\(info.streamWidth) × \(info.streamHeight) · \(info.framesPerSecond ?? fps) fps target"
-                UserDefaults.standard.set(host, forKey: "lastHost")
-                do { try SecretStore.save(secret, account: "client:\(host)") }
-                catch { self.error = "Connected. The key could not be saved: \(error.localizedDescription)" }
+                if serverStatus == nil { rememberPairing(secret, name: host) }
+            case .serverError:
+                clearPendingCommand()
+                resumeAfterScreenCreation = false
+                error = String(try message.decode(String.self).prefix(2000))
+                if !connected { desiredSession = false; status = "Server setup needs attention" }
             case .failure:
                 applyingStreamSettings = false
                 let text = String(try message.decode(String.self).prefix(2000)); error = text; serverFailure = text
-                if !connected { userDisconnected = true; disconnect(); error = text }
+                if !connected && !linked { userDisconnected = true; disconnect(); error = text }
             case .clipboard:
                 guard message.payload.count <= 256 * 1024 else { return }
                 let text = try message.decode(String.self); NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
@@ -198,15 +287,20 @@ struct DiscoveredServer: Identifiable {
     }
     func disconnect() {
         userDisconnected = true; reconnectTask?.cancel(); reconnectTask = nil
+        desiredSession = false; updatingServerBuild = nil; updateConnectionLost = false; resumeAfterScreenCreation = false
+        clearPendingCommand(); greetingTimeout?.cancel()
         let peer = peer; self.peer = nil; peer?.close()
         let decoder = decoder; self.decoder = nil; decodeQueue.async { decoder?.invalidate() }
         audioPlayer?.stop(); audioPlayer = nil
-        connected = false; connecting = false; image = nil; desktop = nil; status = "Disconnected"; applyingStreamSettings = false; gameMouse = false
+        connected = false; connecting = false; linked = false; serverStatus = nil; image = nil; desktop = nil; status = "Disconnected"; applyingStreamSettings = false; gameMouse = false
     }
     private func scheduleReconnect() {
-        guard let endpoint = savedEndpoint, let secret = savedSecret, retryAttempt < 5 else { return }
+        guard let endpoint = savedEndpoint, let secret = savedSecret, retryAttempt < (updatingServerBuild != nil ? 24 : 5) else {
+            if updatingServerBuild != nil { error = "Server has not returned after its update. Check it on the mini, then reconnect."; updatingServerBuild = nil }
+            return
+        }
         retryAttempt += 1
-        let delay = min(15, retryAttempt * 3); status = "Reconnecting in \(delay)s…"
+        let delay = min(15, retryAttempt * 3); status = updatingServerBuild == nil ? "Reconnecting in \(delay)s…" : "Server is updating · Reconnecting in \(delay)s…"
         reconnectTask = Task {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, !self.userDisconnected else { return }
@@ -215,8 +309,58 @@ struct DiscoveredServer: Identifiable {
     }
     func sendInput(_ input: InputEvent) { if connected, input.valid { try? peer?.send(WireMessage(.input, value: input)) } }
     func setScaling(_ mode: Int32) {
+        if linked, !connected { sendServerCommand(ServerCommand(.setResolution, modeID: mode)); return }
         if desktop?.modes.contains(where: { $0.id == mode }) == true { try? peer?.send(WireMessage(.configure, value: ConfigureDisplay(modeID: mode))) }
     }
+    private var resumeAfterScreenCreation = false
+    private func streamHello() -> ClientHello {
+        ClientHello(name: Host.current().localizedName ?? "MacBook", fps: fps, bitrate: bitrate, responsiveCursor: responsiveCursor,
+            maximumVideoHeight: maximumVideoHeight, audioEnabled: audioEnabled, muteHostAudio: muteHostAudio, manageServer: true)
+    }
+    private func rememberPairing(_ secret: PairingSecret, name: String) {
+        do {
+            try SecretStore.save(secret, account: "client:\(host)")
+            UserDefaults.standard.set(host, forKey: "lastHost")
+            pairedServers.removeAll { $0.host == host }
+            pairedServers.insert(PairedServer(host: host, name: String(name.prefix(100))), at: 0)
+            pairedServers = Array(pairedServers.prefix(32))
+            UserDefaults.standard.set(try JSONEncoder().encode(pairedServers), forKey: "pairedServers")
+        } catch { self.error = "Connected. Pairing could not be saved: \(error.localizedDescription)" }
+    }
+    private func clearPendingCommand() {
+        pendingCommand = nil; applyingServerCommand = false; commandTimeout?.cancel(); commandTimeout = nil
+    }
+    func sendServerCommand(_ command: ServerCommand) {
+        guard linked, !applyingServerCommand, command.valid, let peer else { return }
+        do {
+            pendingCommand = command.requestID; applyingServerCommand = true; error = nil
+            try peer.send(WireMessage(.serverCommand, value: command))
+            commandTimeout = Task {
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled, self.pendingCommand == command.requestID else { return }
+                self.clearPendingCommand(); self.error = "Server has not finished this request. Check its status and try again."
+            }
+        } catch { clearPendingCommand(); self.error = error.localizedDescription }
+    }
+    func createScreen() { selectedDisplayWasVirtual = true; sendServerCommand(ServerCommand(.createVirtualScreen)) }
+    func selectDisplay(_ id: UInt32) {
+        selectedDisplayWasVirtual = serverStatus?.displays.first(where: { $0.id == id })?.virtual ?? false
+        preferredDisplayName = serverStatus?.displays.first(where: { $0.id == id })?.name
+        sendServerCommand(ServerCommand(.selectDisplay, displayID: id))
+    }
+    func startScreen() {
+        guard linked, !connected, !applyingServerCommand else { return }
+        desiredSession = true; status = "Starting Screener screen…"
+        selectedDisplayWasVirtual = serverStatus?.selectedDisplay == 0 || serverStatus?.displays.first(where: { $0.id == serverStatus?.selectedDisplay })?.virtual == true
+        preferredDisplayName = serverStatus?.displays.first(where: { $0.id == serverStatus?.selectedDisplay })?.name
+        sendServerCommand(ServerCommand(.startSession, streamSettings: streamHello()))
+    }
+    func stopScreen() {
+        guard linked, !applyingServerCommand else { return }
+        desiredSession = false; connected = false; desktop = nil; image = nil; gameMouse = false; audioPlayer?.setEnabled(false)
+        sendServerCommand(ServerCommand(.stopSession))
+    }
+    func updateServer() { serverUpdateResult = nil; sendServerCommand(ServerCommand(.updateServer)) }
     var supportsLiveStreamSettings: Bool { desktop?.framesPerSecond != nil && desktop?.megabitsPerSecond != nil }
     var supportsResponsiveCursor: Bool { desktop?.cursorEmbedded != nil }
     var supportsVideoDetail: Bool { desktop?.maximumVideoHeight != nil }

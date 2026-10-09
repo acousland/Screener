@@ -24,7 +24,7 @@ import ScreenerCore
                         .keyboardShortcut("t", modifiers: [.control, .option])
                 }
                 CommandMenu("Connection") {
-                    Button("Disconnect") { model.disconnect() }.disabled(!model.connected && !model.connecting)
+                    Button("Disconnect") { model.disconnect() }.disabled(!model.connected && !model.connecting && !model.linked)
                     Toggle("Send Keyboard Shortcuts to Mini", isOn: $model.captureShortcuts)
                     Button("Send Clipboard Text to Mini") { model.sendClipboard() }.disabled(!model.connected)
                     Button("Get Clipboard Text from Mini") { model.receiveClipboard() }.disabled(!model.connected)
@@ -67,6 +67,8 @@ private struct ClientView: View {
                     Spacer(); Toggle("Remote shortcuts", isOn: $model.captureShortcuts).toggleStyle(.checkbox).font(.caption)
                 }.padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
                 }
+            } else if model.linked {
+                ServerSetupView(model: model)
             } else {
                 connectionForm
             }
@@ -100,8 +102,15 @@ private struct ClientView: View {
                 Label("Encrypted, direct connection", systemImage: "lock.shield").font(.callout).foregroundStyle(.secondary)
                 Text("Screener Client").font(.caption).foregroundStyle(.tertiary)
             }.padding(36).frame(maxWidth: .infinity, alignment: .leading).background(.teal.opacity(0.055))
+            ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Connect to your Mac mini").font(.title2.weight(.semibold))
+                if !model.pairedServers.isEmpty {
+                    Menu("Paired minis") {
+                        ForEach(model.pairedServers) { server in Button(server.name) { model.selectPairedServer(server) } }
+                    }
+                }
+                Button("Paste Pairing Invitation") { model.pastePairingInvitation() }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Nearby servers").font(.callout.weight(.medium))
                     Picker("Nearby servers", selection: Binding(get: { model.selectedServer }, set: { model.selectServer($0) })) {
@@ -111,25 +120,28 @@ private struct ClientView: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Mini address").font(.callout.weight(.medium))
-                    TextField("mac-mini.local or 192.168.1.10", text: $model.host)
-                        .textFieldStyle(.roundedBorder).onChange(of: model.host) { _, _ in if !model.servers.contains(where: { $0.id == model.selectedServer && $0.name == model.host }) { model.selectedServer = "" } }
+                    TextField("mac-mini.local or 192.168.1.10", text: Binding(get: { model.host }, set: { model.host = $0; model.selectedServer = "" }))
+                        .textFieldStyle(.roundedBorder)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Connection key").font(.callout.weight(.medium))
                     SecureField("Paste from Screener Server", text: $model.connectionKey).textFieldStyle(.roundedBorder)
-                    Text("On the mini, start Screener Server and choose Copy Connection Key.").font(.caption).foregroundStyle(.secondary)
+                    Text("Pair once using an invitation or connection key from Server. Your key is saved in Keychain after the secure connection succeeds.").font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
                     Picker("Frame rate", selection: $model.fps) { Text("30 fps").tag(30); Text("60 fps").tag(60) }
                     Picker("Quality", selection: $model.bitrate) { Text("25 Mbps").tag(25); Text("45 Mbps").tag(45); Text("75 Mbps").tag(75); Text("100 Mbps").tag(100) }
                 }
                 Toggle("Reconnect after a dropped connection", isOn: $model.reconnectAutomatically).font(.callout)
-                Button { model.connect() } label: { Text("Connect").frame(maxWidth: .infinity) }
+                Button { model.connect() } label: { Text("Connect & Start Screen").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent).controlSize(.large).tint(.teal)
+                    .disabled(model.host.isEmpty || model.connectionKey.isEmpty)
+                Button("Set Up Server Without Viewing") { model.connect(autoStart: false) }
                     .disabled(model.host.isEmpty || model.connectionKey.isEmpty)
                 Text(model.status).font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-            }.padding(36).frame(width: 425)
+            }.padding(36)
+            }.frame(width: 445)
         }.frame(maxHeight: .infinity)
     }
 }

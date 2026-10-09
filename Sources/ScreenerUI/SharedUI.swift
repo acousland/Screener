@@ -2,15 +2,41 @@ import SwiftUI
 import Sparkle
 import ScreenerCore
 
-@MainActor public final class UpdateController: ObservableObject {
+@MainActor public final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     private var controller: SPUStandardUpdaterController?
-    public init() {
+    private var remoteUpdater: SPUUpdater?
+    private var remoteDriver: RemoteUpdateDriver?
+    public var onRemoteUpdateChanged: (() -> Void)?
+    public var beforeRemoteInstall: (() async -> Void)?
+    public init(remoteManaged: Bool = false) {
+        super.init()
         if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
-            controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+            if remoteManaged {
+                let driver = RemoteUpdateDriver()
+                driver.onChanged = { [weak self] in self?.onRemoteUpdateChanged?() }
+                driver.beforeInstall = { [weak self] in await self?.beforeRemoteInstall?() }
+                let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
+                remoteDriver = driver
+                do { try updater.start(); remoteUpdater = updater }
+                catch { driver.report(.failed, error.localizedDescription) }
+            } else { controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil) }
         }
     }
-    public var available: Bool { controller != nil }
-    public func check() { controller?.checkForUpdates(nil) }
+    public var available: Bool { controller != nil || remoteUpdater != nil }
+    public var remoteStatus: RemoteUpdateStatus? { remoteDriver?.status }
+    public func check() { if let remoteUpdater { remoteUpdater.checkForUpdates() } else { controller?.checkForUpdates(nil) } }
+    public func updateRemotely() throws {
+        guard let updater = remoteUpdater, let driver = remoteDriver else { throw ScreenerError.message("Remote updating is unavailable in this Server build.") }
+        guard !driver.status.busy, updater.canCheckForUpdates else { throw ScreenerError.message("Server is already checking or updating. Finish its current update first.") }
+        let app = Bundle.main.bundleURL
+        guard FileManager.default.isWritableFile(atPath: app.path), FileManager.default.isWritableFile(atPath: app.deletingLastPathComponent().path) else {
+            throw ScreenerError.message("Install Screener Server in a writable Applications folder on the mini before updating remotely. macOS may require local administrator approval.")
+        }
+        driver.begin(); updater.checkForUpdates()
+    }
+    public func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        remoteDriver?.finishCycle()
+    }
 }
 public struct ScreenerMark: View {
     public init() {}

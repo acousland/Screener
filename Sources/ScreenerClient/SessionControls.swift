@@ -64,6 +64,7 @@ private struct SessionControlsView: View {
             }.padding(20)
             Divider()
             Form {
+                if model.linked { ServerPreferencesView(model: model) }
                 Section("Display") {
                     if let desktop = model.desktop {
                         Picker("Resolution", selection: Binding(get: { desktop.currentMode }, set: { model.setScaling($0) })) {
@@ -145,7 +146,7 @@ private struct SessionControlsView: View {
                 Section("Clipboard") {
                     Button("Send Clipboard Text to Mini") { model.sendClipboard() }
                     Button("Get Clipboard Text from Mini") { model.receiveClipboard() }
-                    Text("Enable clipboard sharing in Screener Server first.").font(.caption).foregroundStyle(.secondary)
+                    Text(model.linked ? "Enable clipboard sharing in the Mini settings above." : "Enable clipboard sharing in Screener Server first.").font(.caption).foregroundStyle(.secondary)
                 }.disabled(!model.connected)
                 if let error = model.error {
                     Section {
@@ -156,7 +157,8 @@ private struct SessionControlsView: View {
             }.formStyle(.grouped)
             Divider()
             HStack {
-                Button("Disconnect") { model.disconnect() }.disabled(!model.connected && !model.connecting)
+                Button("Disconnect") { model.disconnect() }.disabled(!model.connected && !model.connecting && !model.linked)
+                if model.linked && model.connected { Button("Stop Viewing") { model.stopScreen() }.disabled(model.applyingServerCommand) }
                 Spacer()
                 Button("Return to Desktop") { windows.returnToDesktop() }
                     .keyboardShortcut("s", modifiers: [.control, .option])

@@ -7,7 +7,7 @@ public enum ScreenerError: LocalizedError {
 }
 
 public enum MessageKind: UInt8, Sendable {
-    case hello = 1, desktop, configure, format, video, input, clipboard, clipboardRequest, failure, ping, pong, audio
+    case hello = 1, desktop, configure, format, video, input, clipboard, clipboardRequest, failure, ping, pong, audio, serverStatus, serverCommand, serverError
 }
 public struct WireMessage: Sendable {
     public let kind: MessageKind
@@ -40,7 +40,7 @@ public struct MessageParser {
             guard buffer.count >= 4 + Int(length) else { break }
             let start = buffer.startIndex
             guard let kind = MessageKind(rawValue: buffer[start + 4]) else { throw ScreenerError.message("Unknown network message.") }
-            let limit = kind == .video ? Self.maximumPayload : kind == .audio ? 64 * 1024 : [.desktop, .format, .clipboard].contains(kind) ? 256 * 1024 : 4096
+            let limit = kind == .video ? Self.maximumPayload : kind == .audio ? 64 * 1024 : [.desktop, .format, .clipboard, .serverStatus].contains(kind) ? 256 * 1024 : 4096
             guard Int(length) <= limit else { throw ScreenerError.message("Network message exceeds the limit for its type.") }
             messages.append(WireMessage(kind, payload: Data(buffer[(start + 5)..<(start + 4 + Int(length))])))
             buffer = Data(buffer.dropFirst(4 + Int(length)))
@@ -59,10 +59,12 @@ public struct ClientHello: Codable {
     public let maximumVideoHeight: Int?
     public let audioEnabled: Bool?
     public let muteHostAudio: Bool?
-    public init(name: String, fps: Int = 60, bitrate: Int = 45, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil, muteHostAudio: Bool? = nil) {
+    public let manageServer: Bool?
+    public init(name: String, fps: Int = 60, bitrate: Int = 45, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil, muteHostAudio: Bool? = nil, manageServer: Bool? = nil) {
         protocolVersion = 1; self.name = String(name.prefix(100)); framesPerSecond = fps; megabitsPerSecond = bitrate
         self.responsiveCursor = responsiveCursor
         self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled; self.muteHostAudio = muteHostAudio
+        self.manageServer = manageServer
     }
     public var valid: Bool {
         protocolVersion == 1 && name.count <= 100 && [30, 60].contains(framesPerSecond) && (10...100).contains(megabitsPerSecond)
