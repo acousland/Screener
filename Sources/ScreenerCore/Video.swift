@@ -82,11 +82,13 @@ public final class VideoEncoder {
 public final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     public var onError: ((String) -> Void)?
     public var onAudioError: ((String) -> Void)?
+    public var onAudioStarted: (() -> Void)?
     private var stream: SCStream?
     private var encoder: VideoEncoder?
     private var canSend: () -> Bool = { false }
     private var onAudio: ((Data) -> Bool)?
     private var audioFailed = false
+    private var audioStarted = false
     private let audioQueue = DispatchQueue(label: "Screener.capture.audio", qos: .userInteractive)
     private let queue = DispatchQueue(label: "Screener.capture", qos: .userInteractive)
     public func start(displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int, bitrate: Int, showsCursor: Bool = true, capturesAudio: Bool = false,
@@ -121,7 +123,11 @@ public final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     public func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
         if type == .audio, sample.isValid {
             guard !audioFailed, CMSampleBufferGetNumSamples(sample) > 0 else { return }
-            do { _ = onAudio?(try AudioPCM.encode(sample)) }
+            do {
+                if onAudio?(try AudioPCM.encode(sample)) == true, !audioStarted {
+                    audioStarted = true; onAudioStarted?()
+                }
+            }
             catch { audioFailed = true; onAudioError?("System audio capture failed: \(error.localizedDescription)") }
             return
         }

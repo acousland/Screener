@@ -8,12 +8,20 @@ import ScreenerCore
     private var buttons = Set<Int>()
     private var lastPoint = CGPoint.zero
     private var lastModifiers: UInt64 = 0
+    private var relativeMotion = RelativeMouseMotion()
+    private var relativeActive = false
     var allowed: Bool { AXIsProcessTrusted() }
     func apply(_ input: InputEvent, displayID: CGDirectDisplayID) {
         guard input.valid, allowed else { return }
         let bounds = CGDisplayBounds(displayID)
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let point = CGPoint(x: bounds.minX + min(input.x * bounds.width, bounds.width - 1), y: bounds.minY + min(input.y * bounds.height, bounds.height - 1))
+        let relative = input.relativeMouse == true
+        if [.move, .down, .up, .scroll].contains(input.action), relative != relativeActive {
+            relativeMotion = RelativeMouseMotion(); relativeActive = relative
+        }
+        let current = CGEvent(source: nil)?.location ?? lastPoint
+        let point = relative ? (bounds.contains(current) ? current : CGPoint(x: bounds.midX, y: bounds.midY))
+            : CGPoint(x: bounds.minX + min(input.x * bounds.width, bounds.width - 1), y: bounds.minY + min(input.y * bounds.height, bounds.height - 1))
         let flags = CGEventFlags(rawValue: input.modifiers & 0x00ff0000)
         var event: CGEvent?
         let button = CGMouseButton(rawValue: UInt32(input.button)) ?? .left
@@ -22,7 +30,10 @@ import ScreenerCore
             lastPoint = point
             let pressed = buttons.sorted().first
             let type: CGEventType = pressed == 0 ? .leftMouseDragged : pressed == 1 ? .rightMouseDragged : pressed != nil ? .otherMouseDragged : .mouseMoved
-            event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: CGMouseButton(rawValue: UInt32(pressed ?? 0)) ?? .left)
+            let mouseButton = CGMouseButton(rawValue: UInt32(pressed ?? 0)) ?? .left
+            if relative {
+                event = relativeMotion.event(source: source, type: type, location: point, button: mouseButton, deltaX: input.deltaX, deltaY: input.deltaY)
+            } else { event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: mouseButton) }
         case .down, .up:
             lastPoint = point
             let down = input.action == .down
@@ -55,5 +66,6 @@ import ScreenerCore
             event?.type = .flagsChanged; event?.flags = []; event?.post(tap: .cghidEventTap)
         }
         keys.removeAll(); buttons.removeAll(); lastModifiers = 0
+        relativeMotion = RelativeMouseMotion(); relativeActive = false
     }
 }

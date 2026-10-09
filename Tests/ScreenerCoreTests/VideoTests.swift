@@ -9,6 +9,13 @@ final class VideoTests: XCTestCase {
     func testHardware16By10EncodeDecode() throws {
         try hardwareRoundTrip(width: 3456, height: 2160)
     }
+    func testHardware14InchFullPanelEncodeDecode() throws {
+        try hardwareRoundTrip(width: 3024, height: 1964)
+    }
+    func testHardware16InchFullPanelDownsampledEncodeDecode() throws {
+        let size = ScreenGeometry.streamSize(width: 3456, height: 2234)
+        try hardwareRoundTrip(width: size.0, height: size.1)
+    }
     func testCursorModeChangesWithUnchangedH264ParameterSets() throws {
         try hardwareRoundTrip(width: 1280, height: 800, changeCursor: true)
     }

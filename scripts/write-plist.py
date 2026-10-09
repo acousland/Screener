@@ -23,7 +23,9 @@ info = {
     'SUPublicEDKey': key, 'SURequireSignedFeed': True, 'SUVerifyUpdateBeforeExtraction': True,
     'SUEnableAutomaticChecks': True, 'SUAutomaticallyUpdate': False,
 }
-if role == 'Client': info['NSPrincipalClass'] = 'ScreenerApplication'
+if role == 'Client':
+    info['NSPrincipalClass'] = 'ScreenerApplication'
+    info['NSPrefersDisplaySafeAreaCompatibilityMode'] = False
 if role == 'Server':
     info['NSScreenCaptureUsageDescription'] = 'Screener shares the selected desktop with your connected MacBook.'
     info['NSAudioCaptureUsageDescription'] = "Screener sends the mini's system audio to your connected MacBook."

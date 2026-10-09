@@ -15,7 +15,7 @@ import VirtualDisplayBridge
                 let details = modes.map { ["logicalWidth":$0.width, "logicalHeight":$0.height, "pixelWidth":$0.pixelWidth, "pixelHeight":$0.pixelHeight] }
                 let object: [String: Any] = ["displayID":monitor.displayID, "modes":details]
                 print(String(data: try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
-                for (width, height) in [(1920,1080), (2560,1440), (1512,945), (1728,1080), (1920,1200), (2560,1600), (3360,2100)] {
+                for (width, height) in [(1920,1080), (2560,1440), (1512,945), (1728,1080), (1512,982), (1728,1117), (1920,1200), (2560,1600), (3360,2100)] {
                     guard modes.contains(where: { $0.width == width && $0.height == height && $0.pixelWidth == width * 2 && $0.pixelHeight == height * 2 }) else {
                         fputs("Required \(width) × \(height) HiDPI mode is missing.\n", stderr); exit(1)
                     }

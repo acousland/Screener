@@ -58,10 +58,11 @@ public struct ClientHello: Codable {
     public let responsiveCursor: Bool?
     public let maximumVideoHeight: Int?
     public let audioEnabled: Bool?
-    public init(name: String, fps: Int = 60, bitrate: Int = 45, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil) {
+    public let muteHostAudio: Bool?
+    public init(name: String, fps: Int = 60, bitrate: Int = 45, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil, muteHostAudio: Bool? = nil) {
         protocolVersion = 1; self.name = String(name.prefix(100)); framesPerSecond = fps; megabitsPerSecond = bitrate
         self.responsiveCursor = responsiveCursor
-        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled
+        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled; self.muteHostAudio = muteHostAudio
     }
     public var valid: Bool {
         protocolVersion == 1 && name.count <= 100 && [30, 60].contains(framesPerSecond) && (10...100).contains(megabitsPerSecond)
@@ -82,6 +83,8 @@ public struct DisplayModeInfo: Codable, Identifiable, Hashable {
         switch (width / divisor, height / divisor) {
         case (8, 5): return "16:10"
         case (16, 9): return "16:9"
+        case (756, 491): return "14″ full screen"
+        case (1728, 1117): return "16″ full screen"
         default: return nil
         }
     }
@@ -105,12 +108,15 @@ public struct DesktopInfo: Codable {
     public let cursorEmbedded: Bool?
     public let maximumVideoHeight: Int?
     public let audioEnabled: Bool?
-    public init(name: String, streamWidth: Int, streamHeight: Int, logicalWidth: Int, logicalHeight: Int, currentMode: Int32, modes: [DisplayModeInfo], framesPerSecond: Int? = nil, megabitsPerSecond: Int? = nil, cursorEmbedded: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil) {
+    public let muteHostAudio: Bool?
+    public let relativeMouseSupported: Bool?
+    public init(name: String, streamWidth: Int, streamHeight: Int, logicalWidth: Int, logicalHeight: Int, currentMode: Int32, modes: [DisplayModeInfo], framesPerSecond: Int? = nil, megabitsPerSecond: Int? = nil, cursorEmbedded: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil, muteHostAudio: Bool? = nil, relativeMouseSupported: Bool? = nil) {
         self.name = name; self.streamWidth = streamWidth; self.streamHeight = streamHeight
         self.logicalWidth = logicalWidth; self.logicalHeight = logicalHeight; self.currentMode = currentMode; self.modes = modes
+        self.relativeMouseSupported = relativeMouseSupported
         self.framesPerSecond = framesPerSecond; self.megabitsPerSecond = megabitsPerSecond
         self.cursorEmbedded = cursorEmbedded
-        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled
+        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled; self.muteHostAudio = muteHostAudio
     }
 }
 public struct ConfigureDisplay: Codable {
@@ -120,10 +126,11 @@ public struct ConfigureDisplay: Codable {
     public let responsiveCursor: Bool?
     public let maximumVideoHeight: Int?
     public let audioEnabled: Bool?
-    public init(modeID: Int32, fps: Int? = nil, bitrate: Int? = nil, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil) {
+    public let muteHostAudio: Bool?
+    public init(modeID: Int32, fps: Int? = nil, bitrate: Int? = nil, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil, muteHostAudio: Bool? = nil) {
         self.modeID = modeID; framesPerSecond = fps; megabitsPerSecond = bitrate
         self.responsiveCursor = responsiveCursor
-        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled
+        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled; self.muteHostAudio = muteHostAudio
     }
     public var valid: Bool {
         (framesPerSecond.map { [30, 60].contains($0) } ?? true)
@@ -146,13 +153,16 @@ public struct InputEvent: Codable {
     public var modifiers: UInt64 = 0
     public var deltaX: Double = 0
     public var deltaY: Double = 0
-    public init(_ action: Action, x: Double = 0, y: Double = 0, button: Int = 0, keyCode: UInt16 = 0, modifiers: UInt64 = 0, deltaX: Double = 0, deltaY: Double = 0) {
+    public let relativeMouse: Bool?
+    public init(_ action: Action, x: Double = 0, y: Double = 0, button: Int = 0, keyCode: UInt16 = 0, modifiers: UInt64 = 0, deltaX: Double = 0, deltaY: Double = 0, relativeMouse: Bool? = nil) {
         self.action = action; self.x = x; self.y = y; self.button = button; self.keyCode = keyCode
         self.modifiers = modifiers; self.deltaX = deltaX; self.deltaY = deltaY
+        self.relativeMouse = relativeMouse
     }
     public var valid: Bool {
         x.isFinite && y.isFinite && deltaX.isFinite && deltaY.isFinite && (0...1).contains(x) && (0...1).contains(y) && (0...2).contains(button)
         && abs(deltaX) <= 10000 && abs(deltaY) <= 10000 && keyCode <= 127
+        && (relativeMouse != true || [.move, .down, .up, .scroll].contains(action))
     }
 }
 public enum VideoPacket {

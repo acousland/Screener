@@ -31,7 +31,7 @@ import ScreenerCore
             logicalWidth: desktop.logicalWidth, logicalHeight: desktop.logicalHeight, currentMode: desktop.currentMode,
             modes: desktop.modes, framesPerSecond: hello?.framesPerSecond, megabitsPerSecond: hello?.megabitsPerSecond,
             cursorEmbedded: !(hello?.responsiveCursor ?? false), maximumVideoHeight: hello?.maximumVideoHeight ?? 2160,
-            audioEnabled: hello?.audioEnabled ?? false)
+            audioEnabled: hello?.audioEnabled ?? false, muteHostAudio: hello?.muteHostAudio ?? false, relativeMouseSupported: true)
     }
     private let displayManager = Displays()
     private let input = InputInjector()
@@ -41,16 +41,27 @@ import ScreenerCore
     private var viewer: PeerConnection?
     private var hello: ClientHello?
     private var capture: DesktopCapture?
+    private let audioOutputMute = AudioOutputMuteController()
+    private var audioForwarding = false
+    private var terminationObserver: NSObjectProtocol?
     private var generation = 0
     private var poll: Timer?
     private let networkQueue = DispatchQueue(label: "Screener.listener", qos: .userInteractive)
     private let sessionLog = Logger(subsystem: "au.com.acousland.ScreenerServer", category: "session")
     init() {
+        audioOutputMute.onError = { [weak self] text in
+            self?.error = text; self?.sendFailure(text)
+        }
+        audioOutputMute.refresh() // Recover an owned mute left by an interrupted previous run.
+        terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.audioOutputMute.setEnabled(false) }
+        }
         poll = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in Task { @MainActor in self?.refresh() } }
         refresh()
         if UserDefaults.standard.bool(forKey: "startServerOnLaunch") { Task { await start() } }
     }
     func refresh(restartStream: Bool = true) {
+        audioOutputMute.refresh()
         screenPermission = CGPreflightScreenCaptureAccess(); controlPermission = AXIsProcessTrusted()
         loginItem = SMAppService.mainApp.status == .enabled
         displays = displayManager.list()
@@ -192,12 +203,14 @@ import ScreenerCore
             bitrate: configuration.megabitsPerSecond ?? hello.megabitsPerSecond,
             responsiveCursor: configuration.responsiveCursor ?? hello.responsiveCursor ?? false,
             maximumVideoHeight: configuration.maximumVideoHeight ?? hello.maximumVideoHeight ?? 2160,
-            audioEnabled: configuration.audioEnabled ?? hello.audioEnabled ?? false)
+            audioEnabled: configuration.audioEnabled ?? hello.audioEnabled ?? false,
+            muteHostAudio: configuration.muteHostAudio ?? hello.muteHostAudio ?? false)
         let changed = configuration.modeID != desktop.currentMode || updated.framesPerSecond != hello.framesPerSecond
             || updated.megabitsPerSecond != hello.megabitsPerSecond || updated.responsiveCursor != (hello.responsiveCursor ?? false)
             || updated.maximumVideoHeight != (hello.maximumVideoHeight ?? 2160) || updated.audioEnabled != (hello.audioEnabled ?? false)
         if configuration.modeID != desktop.currentMode { try displayManager.setMode(configuration.modeID, on: selectedDisplay) }
         self.hello = updated
+        audioOutputMute.setEnabled(audioForwarding && (updated.audioEnabled ?? false) && (updated.muteHostAudio ?? false))
         refresh(restartStream: false)
         sendDesktop()
         if changed { Task { await restartCapture() } }
@@ -209,6 +222,8 @@ import ScreenerCore
     private func sendFailure(_ text: String) { if let viewer { try? viewer.send(WireMessage(.failure, value: text)) } }
     private func restartCapture() async {
         generation += 1; let current = generation
+        audioForwarding = false
+        if !(hello?.audioEnabled ?? false) || !(hello?.muteHostAudio ?? false) { audioOutputMute.setEnabled(false) }
         let previous = capture; capture = nil; streaming = false
         await previous?.stop()
         guard current == generation, let peer = viewer, let hello, let desktop = streamedDesktop else { return }
@@ -217,7 +232,13 @@ import ScreenerCore
             guard let self, self.generation == current else { return }; self.error = text; self.stopSession(text)
         } }
         capture.onAudioError = { [weak self] text in Task { @MainActor in
-            guard let self, self.generation == current else { return }; self.error = text; self.sendFailure(text)
+            guard let self, self.generation == current else { return }
+            self.audioForwarding = false; self.audioOutputMute.setEnabled(false); self.error = text; self.sendFailure(text)
+        } }
+        capture.onAudioStarted = { [weak self] in Task { @MainActor in
+            guard let self, self.generation == current, self.viewer === peer else { return }
+            self.audioForwarding = true
+            self.audioOutputMute.setEnabled((self.hello?.audioEnabled ?? false) && (self.hello?.muteHostAudio ?? false))
         } }
         do {
             let cursorEmbedded = !(hello.responsiveCursor ?? false)
@@ -236,6 +257,7 @@ import ScreenerCore
     }
     private func stopSession(_ reason: String?) {
         generation += 1; input.releaseAll()
+        audioForwarding = false; audioOutputMute.setEnabled(false)
         let old = viewer; viewer = nil; hello = nil; clientName = nil; streaming = false
         if let old {
             candidates.removeValue(forKey: ObjectIdentifier(old))

@@ -68,6 +68,8 @@
                     // 16:10 workspaces, including the usable areas of the 14- and 16-inch MacBook Pro.
                     {1920,1200},{1440,900},{1512,945},{1680,1050},{1728,1080},
                     {2240,1400},{2560,1600},{3008,1880},{3360,2100},{1280,800},
+                    // Full MacBook Pro panels, including the strip beside the camera housing.
+                    {1512,982},{1728,1117},
                     // Keep the existing 16:9 workspaces for external displays and saved preferences.
                     {1920,1080},{2560,1440},{3008,1692},{3360,1890},{3840,2160},{1280,720}
                 };

@@ -14,6 +14,8 @@ import ScreenerCore
                 UpdateCommands(updater: updater)
                 CommandGroup(replacing: .newItem) { }
                 CommandMenu("View") {
+                    Toggle("Game Mouse", isOn: Binding(get: { model.gameMouse }, set: { model.setGameMouse($0) }))
+                        .keyboardShortcut("g", modifiers: [.control, .option]).disabled(!model.connected || !model.supportsGameMouse)
                     Toggle("Responsive Cursor", isOn: Binding(get: { model.responsiveCursor }, set: { model.setResponsiveCursor($0) }))
                         .disabled(model.applyingStreamSettings || (model.connected && !model.supportsResponsiveCursor))
                     Button("Session Controls…") { sessionWindows.toggle(model: model) }

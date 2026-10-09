@@ -26,9 +26,14 @@ struct DiscoveredServer: Identifiable {
         didSet { UserDefaults.standard.set(audioEnabled, forKey: "audioEnabled") }
     }
     @Published var audioVolume: Double = 1 { didSet { audioPlayer?.setVolume(Float(audioVolume)) } }
+    @Published private(set) var muteHostAudio = UserDefaults.standard.object(forKey: "muteHostAudio") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(muteHostAudio, forKey: "muteHostAudio") }
+    }
     let keyboardCapture = KeyboardCaptureController()
     @Published private(set) var applyingStreamSettings = false
     @Published var captureShortcuts = true
+    @Published private(set) var gameMouse = false
+    @Published var mouseSensitivity = 1.0
     @Published var reconnectAutomatically = true
     @Published var receivedFrames = 0
     @Published private(set) var cursorEmbedded = true
@@ -42,6 +47,7 @@ struct DiscoveredServer: Identifiable {
     private var peer: PeerConnection?
     private var decoder: VideoDecoder?
     private var audioPlayer: AudioPlayback?
+    private var audioPlaybackFailed = false
     private var reconnectTask: Task<Void, Never>?
     private var retryAttempt = 0
     private var savedEndpoint: NWEndpoint?
@@ -95,10 +101,12 @@ struct DiscoveredServer: Identifiable {
         connecting = true; connected = false; status = "Connecting securely…"; desktop = nil; image = nil; serverFailure = nil; applyingStreamSettings = false
         let peer = PeerConnection(endpoint: endpoint, secret: secret); self.peer = peer
         let decoder = VideoDecoder(); self.decoder = decoder
+        audioPlaybackFailed = false
         let audio = AudioPlayback(); self.audioPlayer = audio
         audio.setEnabled(audioEnabled); audio.setVolume(Float(audioVolume))
         audio.onError = { [weak self, weak peer] text in Task { @MainActor in
-            guard let self, let peer, self.peer === peer else { return }; self.error = text
+            guard let self, let peer, self.peer === peer else { return }
+            self.audioPlaybackFailed = true; self.setAudioEnabled(false); self.error = text
         } }
         let peerID = ObjectIdentifier(peer)
         let budget = DecodeBudget()
@@ -108,7 +116,7 @@ struct DiscoveredServer: Identifiable {
         peer.onReady = { [weak self, weak peer] in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
             self.status = "Starting desktop…"
-            try? peer.send(WireMessage(.hello, value: ClientHello(name: Host.current().localizedName ?? "MacBook", fps: self.fps, bitrate: self.bitrate, responsiveCursor: self.responsiveCursor, maximumVideoHeight: self.maximumVideoHeight, audioEnabled: self.audioEnabled)))
+            try? peer.send(WireMessage(.hello, value: ClientHello(name: Host.current().localizedName ?? "MacBook", fps: self.fps, bitrate: self.bitrate, responsiveCursor: self.responsiveCursor, maximumVideoHeight: self.maximumVideoHeight, audioEnabled: self.audioEnabled, muteHostAudio: self.muteHostAudio)))
         } }
         peer.onMessage = { [weak self, weak peer, weak decoder, weak audio] message in
             guard let self, let peer, let decoder else { return }
@@ -130,7 +138,7 @@ struct DiscoveredServer: Identifiable {
         }
         peer.onClose = { [weak self, weak peer] reason in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
-            self.peer = nil; self.connected = false; self.connecting = false; self.image = nil; self.desktop = nil; self.applyingStreamSettings = false
+            self.peer = nil; self.connected = false; self.connecting = false; self.image = nil; self.desktop = nil; self.applyingStreamSettings = false; self.gameMouse = false
             let decoder = self.decoder; self.decoder = nil; self.decodeQueue.async { decoder?.invalidate() }
             self.audioPlayer?.stop(); self.audioPlayer = nil
             self.status = "Disconnected"; if let reason { self.error = reason }
@@ -165,7 +173,13 @@ struct DiscoveredServer: Identifiable {
                 if let value = info.megabitsPerSecond { bitrate = value }
                 if let embedded = info.cursorEmbedded { responsiveCursor = !embedded }
                 if let height = info.maximumVideoHeight { maximumVideoHeight = height }
-                if let enabled = info.audioEnabled { audioEnabled = enabled; audioPlayer?.setEnabled(enabled) }
+                if let enabled = info.audioEnabled {
+                    if audioPlaybackFailed {
+                        audioEnabled = false; audioPlayer?.setEnabled(false)
+                        if enabled { peer?.send(try WireMessage(.configure, value: ConfigureDisplay(modeID: info.currentMode, audioEnabled: false))) }
+                    } else { audioEnabled = enabled; audioPlayer?.setEnabled(enabled) }
+                }
+                if let mute = info.muteHostAudio { muteHostAudio = mute }
                 applyingStreamSettings = false
                 status = "\(info.streamWidth) × \(info.streamHeight) · \(info.framesPerSecond ?? fps) fps target"
                 UserDefaults.standard.set(host, forKey: "lastHost")
@@ -187,7 +201,7 @@ struct DiscoveredServer: Identifiable {
         let peer = peer; self.peer = nil; peer?.close()
         let decoder = decoder; self.decoder = nil; decodeQueue.async { decoder?.invalidate() }
         audioPlayer?.stop(); audioPlayer = nil
-        connected = false; connecting = false; image = nil; desktop = nil; status = "Disconnected"; applyingStreamSettings = false
+        connected = false; connecting = false; image = nil; desktop = nil; status = "Disconnected"; applyingStreamSettings = false; gameMouse = false
     }
     private func scheduleReconnect() {
         guard let endpoint = savedEndpoint, let secret = savedSecret, retryAttempt < 5 else { return }
@@ -207,6 +221,21 @@ struct DiscoveredServer: Identifiable {
     var supportsResponsiveCursor: Bool { desktop?.cursorEmbedded != nil }
     var supportsVideoDetail: Bool { desktop?.maximumVideoHeight != nil }
     var supportsAudio: Bool { desktop?.audioEnabled != nil }
+    var supportsHostMute: Bool { desktop?.muteHostAudio != nil }
+    var supportsGameMouse: Bool { desktop?.relativeMouseSupported == true }
+    func setGameMouse(_ enabled: Bool) {
+        guard !enabled || (connected && supportsGameMouse) else { return }
+        gameMouse = enabled
+    }
+    func setMuteHostAudio(_ enabled: Bool) {
+        guard !connected || supportsHostMute else { return }
+        muteHostAudio = enabled
+        guard connected, let desktop, let peer else { return }
+        do {
+            try peer.send(WireMessage(.configure, value: ConfigureDisplay(modeID: desktop.currentMode, muteHostAudio: enabled)))
+            applyingStreamSettings = true; error = nil
+        } catch { self.error = error.localizedDescription }
+    }
     func setAudioEnabled(_ enabled: Bool) {
         guard !connected || supportsAudio else { return }
         audioEnabled = enabled; audioPlayer?.setEnabled(enabled)

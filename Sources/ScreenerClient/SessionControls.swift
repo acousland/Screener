@@ -98,6 +98,12 @@ private struct SessionControlsView: View {
                 Section("Audio") {
                     Toggle("Play mini audio on this Mac", isOn: Binding(get: { model.audioEnabled }, set: { model.setAudioEnabled($0) }))
                         .disabled(model.applyingStreamSettings || (model.connected && !model.supportsAudio))
+                    Toggle("Mute mini speakers", isOn: Binding(get: { model.muteHostAudio }, set: { model.setMuteHostAudio($0) }))
+                        .disabled(!model.audioEnabled || model.applyingStreamSettings || (model.connected && !model.supportsHostMute))
+                    Text(model.connected && !model.supportsHostMute
+                        ? "Update Server to 0.1.5 or later to mute its speakers."
+                        : "Mute the mini's output while forwarding audio. Its previous mute state is restored when forwarding stops.")
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Text("Volume")
                         Slider(value: $model.audioVolume, in: 0...1).disabled(!model.audioEnabled)
@@ -109,6 +115,15 @@ private struct SessionControlsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Session") {
+                    Toggle("Game Mouse", isOn: Binding(get: { model.gameMouse }, set: { model.setGameMouse($0) }))
+                        .disabled(!model.connected || !model.supportsGameMouse)
+                    HStack {
+                        Text("Mouse sensitivity")
+                        Slider(value: $model.mouseSensitivity, in: 0.25...3)
+                        Text(String(format: "%.2f×", model.mouseSensitivity)).monospacedDigit().frame(width: 50)
+                    }.disabled(!model.gameMouse)
+                    Text("Relative movement for first-person games. Click the viewer to lock the pointer. Control–Option–G toggles; Control–Option–Esc releases.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Toggle("Responsive Cursor", isOn: Binding(get: { model.responsiveCursor }, set: { model.setResponsiveCursor($0) }))
                         .disabled(model.applyingStreamSettings || (model.connected && !model.supportsResponsiveCursor))
                     Text(model.connected && !model.supportsResponsiveCursor
