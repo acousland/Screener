@@ -1,2 +1,21 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0"><channel><title>Screener Client Updates</title><description>Signed release updates appear here after publication.</description></channel></rss>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>Screener Client Updates</title>
+    <link>https://github.com/acousland/Screener</link>
+    <description>Updates for Screener Client on Apple silicon Macs.</description>
+    <item>
+      <title>Screener Client 0.1.0</title>
+      <pubDate>Fri, 09 Oct 2026 03:28:20 GMT</pubDate>
+      <sparkle:version>1791516445</sparkle:version>
+      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description>4K remote desktop with macOS HiDPI scaling. See the GitHub release for details.</description>
+      <enclosure url="https://github.com/acousland/Screener/releases/download/v0.1.0/Screener-Client-0.1.0.zip" length="2249652" type="application/octet-stream" sparkle:edSignature="x5dRBMwh+gISci0O7OD0OtRi6/zJ5eIxOoC4tLQRCtuOgKmLewBUNZB5vo0r2Z7gxtEwNUf1w1EpZ/wbZg/ECA=="></enclosure>
+    </item>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: N46hbO5s8UQR1TinopnIHACvPHiXEk0D/TsoVPQ8ecDRPeZpfVE4LD4s5duG/mYR4v+KJhXOmLOpWPn4FFxJCw==
+length: 1302
+-->
