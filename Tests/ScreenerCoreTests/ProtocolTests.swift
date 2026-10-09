@@ -1,4 +1,5 @@
 import XCTest
+import CoreGraphics
 @testable import ScreenerCore
 
 final class ProtocolTests: XCTestCase {
@@ -101,5 +102,54 @@ final class ProtocolTests: XCTestCase {
         struct LegacyDesktop: Decodable { let currentMode: Int32; let streamWidth: Int }
         let compatible = try WireMessage(.desktop, value: updated).decode(LegacyDesktop.self)
         XCTAssertEqual(compatible.currentMode, 42); XCTAssertEqual(compatible.streamWidth, 3840)
+    }
+    func testResponsiveCursorNegotiationRemainsCompatibleWithOlderPeers() throws {
+        let legacyHello = try WireMessage(.hello, payload: Data(#"{"protocolVersion":1,"name":"MacBook","framesPerSecond":60,"megabitsPerSecond":45}"#.utf8)).decode(ClientHello.self)
+        XCTAssertNil(legacyHello.responsiveCursor); XCTAssertTrue(legacyHello.valid)
+        let hello = try WireMessage(.hello, value: ClientHello(name: "MacBook", responsiveCursor: true)).decode(ClientHello.self)
+        XCTAssertEqual(hello.responsiveCursor, true)
+        let configuration = try WireMessage(.configure, value: ConfigureDisplay(modeID: 42, responsiveCursor: false)).decode(ConfigureDisplay.self)
+        XCTAssertEqual(configuration.responsiveCursor, false); XCTAssertTrue(configuration.valid)
+        let legacyConfiguration = try WireMessage(.configure, payload: Data(#"{"modeID":42}"#.utf8)).decode(ConfigureDisplay.self)
+        XCTAssertNil(legacyConfiguration.responsiveCursor)
+        let legacyFormat = try WireMessage(.format, payload: Data(#"{"parameterSets":[]}"#.utf8)).decode(VideoFormat.self)
+        XCTAssertNil(legacyFormat.cursorEmbedded)
+        let format = try WireMessage(.format, value: VideoFormat(parameterSets: [], cursorEmbedded: false)).decode(VideoFormat.self)
+        XCTAssertEqual(format.cursorEmbedded, false)
+        let desktop = DesktopInfo(name: "Mini", streamWidth: 3456, streamHeight: 2160, logicalWidth: 1920, logicalHeight: 1200, currentMode: 42, modes: [], cursorEmbedded: false)
+        XCTAssertEqual(try WireMessage(.desktop, value: desktop).decode(DesktopInfo.self).cursorEmbedded, false)
+    }
+    func testFrameDeliveryKeepsLatestOutputWhileMainThreadIsBusy() {
+        let slot = LatestValueSlot<Int>()
+        XCTAssertTrue(slot.offer(1))
+        for frame in 2...100 { XCTAssertFalse(slot.offer(frame)) }
+        XCTAssertEqual(slot.take(), 100); XCTAssertNil(slot.take())
+        XCTAssertTrue(slot.offer(101)); XCTAssertEqual(slot.take(), 101)
+    }
+    func testAudioAndVideoDetailNegotiationWithLegacyPeers() throws {
+        let legacy = try WireMessage(.hello, value: ClientHello(name: "MacBook")).decode(ClientHello.self)
+        XCTAssertNil(legacy.audioEnabled); XCTAssertNil(legacy.maximumVideoHeight)
+        let hello = try WireMessage(.hello, value: ClientHello(name: "MacBook", maximumVideoHeight: 1080, audioEnabled: true)).decode(ClientHello.self)
+        XCTAssertTrue(hello.valid); XCTAssertEqual(hello.audioEnabled, true); XCTAssertEqual(hello.maximumVideoHeight, 1080)
+        let config = try WireMessage(.configure, value: ConfigureDisplay(modeID: 42, maximumVideoHeight: 1440, audioEnabled: false)).decode(ConfigureDisplay.self)
+        XCTAssertTrue(config.valid); XCTAssertEqual(config.audioEnabled, false); XCTAssertEqual(config.maximumVideoHeight, 1440)
+        XCTAssertFalse(ClientHello(name: "MacBook", maximumVideoHeight: 720).valid)
+        XCTAssertFalse(ConfigureDisplay(modeID: 42, maximumVideoHeight: 9000).valid)
+        for height in [1080, 1440, 2160] {
+            let size = ScreenGeometry.streamSize(width: 6720, height: 4200, maximumHeight: height)
+            XCTAssertEqual(size.1, height); XCTAssertEqual(Double(size.0) / Double(size.1), 1.6, accuracy: 0.000001)
+        }
+    }
+    func testSystemShortcutCaptureRequiresActiveReadyDesktop() {
+        let command = CGEventFlags.maskCommand.rawValue
+        XCTAssertTrue(ShortcutRouting.capture(appActive: true, windowActive: true, desktopReady: true, enabled: true, keyCode: 49, modifiers: command))
+        for state in 0..<4 {
+            XCTAssertFalse(ShortcutRouting.capture(appActive: state != 0, windowActive: state != 1, desktopReady: state != 2, enabled: state != 3, keyCode: 49, modifiers: command))
+        }
+        let local = CGEventFlags.maskControl.rawValue | CGEventFlags.maskAlternate.rawValue
+        for code: UInt16 in [1, 17, 53] {
+            XCTAssertFalse(ShortcutRouting.capture(appActive: true, windowActive: true, desktopReady: true, enabled: true, keyCode: code, modifiers: local))
+        }
+        XCTAssertTrue(ShortcutRouting.capture(appActive: true, windowActive: true, desktopReady: true, enabled: true, keyCode: 1, modifiers: command))
     }
 }

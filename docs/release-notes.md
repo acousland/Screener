@@ -1,11 +1,15 @@
-Adds the missing **16:10 HiDPI resolutions** for the MacBook's usable screen area. Both the Client and Server show **16:10** or **16:9** beside the relevant resolutions.
+Adds mini system audio, faster pointer movement, video detail controls, explicit color handling and capture of macOS system shortcuts.
 
-The virtual monitor now offers 1280 × 800, 1440 × 900, 1512 × 945, 1680 × 1050, 1728 × 1080, 1920 × 1200, 2240 × 1400, 2560 × 1600, 3008 × 1880 and 3360 × 2100 HiDPI workspaces. Existing 16:9 modes remain available. New installations default to 1920 × 1200; existing saved scaling is preserved.
+Update **both Server and Client to 0.1.4** using **Check for Updates…**. Use **Control–Option–S** to open Session Controls while in transparent full screen.
 
-Update both apps using **Check for Updates…**, then quit and reopen **Screener Server** so its virtual monitor is recreated with the new modes. Select **Screener 4K · Virtual** on the Server, and choose a **16:10 · HiDPI** resolution under **Session Controls → Display → Resolution**. Use **Control–Option–S** to switch to the controls while the remote desktop stays in transparent full screen.
+- **Audio:** the mini's system sound plays through the MacBook's selected output by default. Session Controls → Audio provides a playback toggle and local volume. Allow Screen & System Audio Recording for Server on the mini. Stereo 48 kHz PCM adds about 3.1 Mbps, uses the encrypted connection and bounds playback buffering to 125 ms. It does not capture microphones or mute the mini's speakers; movie lip-sync is not implemented.
+- **Desktop responsiveness:** hardware low-latency H.264, reduced decoder buffering and newest-frame presentation. Choose 60 fps, Fast · 1080p and 25 Mbps to reduce video work while keeping the same desktop workspace. Balanced · 1440p is another option. Lower detail softens text; end-to-end latency improvement has not yet been measured on the target pair.
+- **Responsive Cursor:** enabled by default; the MacBook draws an immediate local arrow and excludes the mini's pointer from video. Turn it off under View or Session Controls when you need exact text/resize/custom cursor shapes. Older peers retain the embedded cursor.
+- **Video quality:** explicit Rec.709 capture/encoding and sRGB display output address implicit color handling. Full · up to 4K with 75 or 100 Mbps offers the most detail on a fast LAN. Video remains lossy SDR H.264 4:2:0.
+- **Command–Space and other system shortcuts:** grant Accessibility to Screener Client on the MacBook using Session Controls → Session → Allow Shortcut Capture…. Reopen Client if needed. Shortcuts go to the mini only when the active viewer has keyboard focus and remote shortcuts are enabled. Control–Option–S/T/Esc remain local controls.
 
-A 2560 × 1600 HiDPI workspace streams at 3456 × 2160, preserving 16:10 within the existing video limit. This update also fixes floating-point rounding that could shave two pixels off some scaled streams. These modes match the area below the notch, rather than the extra notch/menu-bar strip. Physical monitors continue to offer their own macOS-supported modes.
+Live changes briefly restart capture with the connection kept open. New audio, cursor and video-detail fields remain compatible with older peers; update both apps to access all the controls.
 
-The connection key is unchanged. Apple High Performance Screen Sharing can still conflict with Screener's virtual monitor; use Standard Screen Sharing while setting it up.
+The connection key and existing display scaling are preserved. Apple High Performance Screen Sharing can still conflict with Screener's virtual monitor; use Standard Screen Sharing while setting it up.
 
 Both apps are built and signed locally, then notarized by Apple. Sparkle verifies the signed update feeds and archives. GitHub Actions remains disabled.

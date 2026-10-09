@@ -3,6 +3,39 @@ import Network
 @testable import ScreenerCore
 
 final class TransportTests: XCTestCase {
+    func testSystemAudioAndVideoShareAuthenticatedConnection() throws {
+        if ProcessInfo.processInfo.environment["SCREENER_RESTRICTED_TESTS"] == "1" { throw XCTSkip("Local networking is unavailable.") }
+        let secret = try PairingSecret()
+        let listener = try NWListener(using: SecureParameters.make(secret: secret), on: .any)
+        let listening = expectation(description: "Audio/video listener")
+        let received = expectation(description: "Both media messages")
+        received.expectedFulfillmentCount = 2
+        let pcm = Data(repeating: 0, count: 480 * 8)
+        let video = VideoPacket.encode(Data([0,0,0,1,1]), timestamp: 1, keyframe: true)
+        var server: PeerConnection?
+        listener.stateUpdateHandler = { if case .ready = $0 { listening.fulfill() } }
+        listener.newConnectionHandler = { connection in
+            let peer = PeerConnection(connection); server = peer
+            peer.onMessage = { [weak peer] message in
+                guard message.kind == .hello, let peer else { return }
+                XCTAssertEqual(try? message.decode(ClientHello.self).audioEnabled, true)
+                XCTAssertTrue(peer.sendAudio(pcm)); XCTAssertTrue(peer.sendVideo(video))
+            }
+            peer.start()
+        }
+        listener.start(queue: DispatchQueue(label: "Screener.test.media"))
+        defer { listener.cancel(); server?.close() }
+        wait(for: [listening], timeout: 5)
+        let port = try XCTUnwrap(listener.port)
+        let client = PeerConnection(endpoint: .hostPort(host: "127.0.0.1", port: port), secret: secret)
+        client.onReady = { client.send(try! WireMessage(.hello, value: ClientHello(name: "Test Mac", audioEnabled: true))) }
+        client.onMessage = { message in
+            if message.kind == .audio { XCTAssertEqual(message.payload, pcm); received.fulfill() }
+            if message.kind == .video { XCTAssertEqual(message.payload, video); received.fulfill() }
+        }
+        client.start(); defer { client.close() }
+        wait(for: [received], timeout: 5)
+    }
     func testSessionRejectionArrivesBeforeDisconnect() throws {
         if ProcessInfo.processInfo.environment["SCREENER_RESTRICTED_TESTS"] == "1" { throw XCTSkip("This session blocks local networking; run this test in an unrestricted developer session.") }
         let secret = try PairingSecret()

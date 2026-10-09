@@ -14,15 +14,25 @@ The initial implementation targets Apple silicon and macOS 15+. The intended tes
 1. Download both application archives from the [Releases page](https://github.com/acousland/Screener/releases).
 2. Move Screener Server to `/Applications` on the mini and Screener Client to `/Applications` on the MacBook.
 3. On the mini, create the virtual monitor and choose your desktop scaling. The same modes are available in macOS System Settings → Displays.
-4. Grant Screen Recording to capture the desktop and Accessibility for remote keyboard/mouse control. Reopen the Server if macOS requests it.
+4. Grant Screen & System Audio Recording to capture the desktop and sound, and Accessibility for remote keyboard/mouse control. Reopen the Server if macOS requests it.
 5. Start the Server and copy its connection key.
 6. On the MacBook, select the nearby server or enter its `.local` hostname/IP address, paste the key, and connect.
 
 Click the remote desktop to focus it. **Control–Option–Esc** releases remote keyboard shortcuts. Disconnecting or moving focus releases held keys/buttons. Clipboard text sharing is off by default; enable it on the Server and use the Client's clipboard menu to transfer text explicitly.
 
+To send macOS system shortcuts such as **Command–Space** to the mini, open **Session Controls → Session → Allow Shortcut Capture…** and grant Accessibility to **Screener Client on the MacBook**. Reopen the Client if necessary. With **Send keyboard shortcuts to mini** enabled, shortcuts are intercepted only while the active remote desktop has keyboard focus. Local controls, other apps and other Spaces keep their normal keyboard handling. The mini's Server also needs its own Accessibility permission to inject the input.
+
 **Transparent Mode** is enabled by default in the Client's **View** menu. In full screen it hides Screener's controls, title bar, local menu bar and Dock, and shows only the remote desktop and its cursor. **Control–Option–T** toggles the mode. **Control–Option–Esc** exits transparent full screen and releases keyboard focus so you can return to the local controls. Local window controls and cursor visibility are restored when you leave the mode, switch apps or disconnect. Video retains the remote display's aspect ratio.
 
 **Session Controls** opens on the regular macOS desktop before entering transparent full screen. It stays in its own Space while the remote desktop remains full screen. Use **Control–Option–S** to switch to the controls and back, or open **View → Session Controls…** and use **Return to Desktop**. You can also move the controls to another desktop in Mission Control. The window shares the current connection and lets you change resolution, video settings, Transparent Mode, keyboard shortcuts, automatic reconnect and clipboard transfers. Resolution changes apply immediately; choose **Apply Video Settings** to change frame rate or quality with a brief video pause and no disconnect. Live video settings require Server 0.1.2 or later; resolution controls also work with older servers.
+
+**Responsive Cursor** is enabled by default with Server and Client 0.1.4 or later. The MacBook draws a local arrow immediately while the Server leaves the cursor out of the video. Change it in **View → Responsive Cursor** or **Session Controls → Session**. Turning it off restores the mini's cursor in the video, including text, resize and custom cursor shapes. Switching modes restarts capture briefly without disconnecting, and the Client follows each video's cursor metadata so it shows one pointer. Older Clients keep the embedded cursor; newer Clients connected to older Servers also use the embedded cursor automatically.
+
+Responsive Cursor removes the video round trip from pointer movement; clicking, dragging windows and typing still depend on the mini and the video stream. H.264 uses hardware low-latency encoding, the decoder avoids display-order buffering, and the Client displays the newest decoded frame when its main thread is busy. For delayed desktop reactions, try **60 fps**, **Fast · 1080p** and **25 Mbps** in Session Controls, then **Apply Video Settings**. Lower video detail reduces capture, encoding and drawing work while preserving the desktop workspace and aspect ratio; text will be softer. **Balanced · 1440p** is an intermediate choice, while **Full · up to 4K** gives the sharpest text. End-to-end latency has not been measured on the target pair.
+
+For better detail on a fast LAN, use **Full** with **75 or 100 Mbps**. Capture and H.264 metadata explicitly use Rec.709, and the Client renders to a tagged sRGB surface. Video remains lossy SDR H.264 4:2:0; it does not preserve HDR or the full Display P3 gamut. Higher quality uses more bandwidth and may increase delay on a congested connection.
+
+**Mini system audio** is enabled by default with both apps at 0.1.4 or later. **Session Controls → Audio** lets you stop playback or change the local volume. The mini's sound plays through the MacBook's selected output, using stereo 48 kHz PCM over the same encrypted connection (about 3.1 Mbps in addition to video). This captures system sound, without microphone capture. Sound may also remain audible on the mini's output. Playback drops old audio under backpressure and limits its scheduled buffer to 125 ms; it is not synchronized to delayed video for movie playback. Older Servers do not send audio, and the controls indicate that an update is needed.
 
 Use a stable LAN connection. Wired Ethernet on the mini is recommended. TCP port **49555** must be reachable; discovery uses Bonjour `_screener._tcp`. There is no cloud service or relay. Do not expose the server directly to the public internet.
 
@@ -57,9 +67,9 @@ See [RELEASING.md](docs/RELEASING.md) for Developer ID signing, notarization, si
 
 ## Current scope
 
-H.264 4:2:0 video, 4K output, 30/60 fps targets, one viewer, one shared display, keyboard/mouse input, manual clipboard text transfer and bounded automatic reconnect. Audio, file transfer, HDR, pre-login/FileVault unlock, multiple concurrent viewers and internet traversal are not implemented.
+H.264 4:2:0 SDR video, up to 4K output with optional 1440p/1080p caps, 30/60 fps targets, stereo system audio, one viewer, one shared display, keyboard/mouse input, manual clipboard text transfer and bounded automatic reconnect. File transfer, microphone forwarding, HDR, pre-login/FileVault unlock, multiple concurrent viewers and internet traversal are not implemented.
 
-The random 256-bit connection key is stored in Keychain and used for mutually authenticated TLS-PSK/AES-GCM. Rotating it disconnects existing connections; it must then be replaced on clients. Captured desktop pixels and input are never sent before authentication. The protocol bounds message sizes and validates display/video/input data.
+The random 256-bit connection key is stored in Keychain and used for mutually authenticated TLS-PSK/AES-GCM. Rotating it disconnects existing connections; it must then be replaced on clients. Captured desktop pixels, audio and input are never sent before authentication. The protocol bounds message sizes and validates display/video/audio/input data.
 
 ## Licence
 

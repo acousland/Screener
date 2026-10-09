@@ -14,6 +14,8 @@ import ScreenerCore
                 UpdateCommands(updater: updater)
                 CommandGroup(replacing: .newItem) { }
                 CommandMenu("View") {
+                    Toggle("Responsive Cursor", isOn: Binding(get: { model.responsiveCursor }, set: { model.setResponsiveCursor($0) }))
+                        .disabled(model.applyingStreamSettings || (model.connected && !model.supportsResponsiveCursor))
                     Button("Session Controls…") { sessionWindows.toggle(model: model) }
                         .keyboardShortcut("s", modifiers: [.control, .option])
                     Toggle("Transparent Mode", isOn: $model.transparentMode)
@@ -117,7 +119,7 @@ private struct ClientView: View {
                 }
                 HStack {
                     Picker("Frame rate", selection: $model.fps) { Text("30 fps").tag(30); Text("60 fps").tag(60) }
-                    Picker("Quality", selection: $model.bitrate) { Text("25 Mbps").tag(25); Text("45 Mbps").tag(45); Text("75 Mbps").tag(75) }
+                    Picker("Quality", selection: $model.bitrate) { Text("25 Mbps").tag(25); Text("45 Mbps").tag(45); Text("75 Mbps").tag(75); Text("100 Mbps").tag(100) }
                 }
                 Toggle("Reconnect after a dropped connection", isOn: $model.reconnectAutomatically).font(.callout)
                 Button { model.connect() } label: { Text("Connect").frame(maxWidth: .infinity) }

@@ -21,16 +21,27 @@ struct DiscoveredServer: Identifiable {
     @Published var error: String?
     @Published var fps = 60
     @Published var bitrate = 45
+    @Published var maximumVideoHeight = 2160
+    @Published private(set) var audioEnabled = UserDefaults.standard.object(forKey: "audioEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(audioEnabled, forKey: "audioEnabled") }
+    }
+    @Published var audioVolume: Double = 1 { didSet { audioPlayer?.setVolume(Float(audioVolume)) } }
+    let keyboardCapture = KeyboardCaptureController()
     @Published private(set) var applyingStreamSettings = false
     @Published var captureShortcuts = true
     @Published var reconnectAutomatically = true
     @Published var receivedFrames = 0
+    @Published private(set) var cursorEmbedded = true
+    @Published private(set) var responsiveCursor = UserDefaults.standard.object(forKey: "responsiveCursor") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(responsiveCursor, forKey: "responsiveCursor") }
+    }
     @Published var transparentMode = UserDefaults.standard.object(forKey: "transparentMode") as? Bool ?? true {
         didSet { UserDefaults.standard.set(transparentMode, forKey: "transparentMode") }
     }
     private var browser: NWBrowser?
     private var peer: PeerConnection?
     private var decoder: VideoDecoder?
+    private var audioPlayer: AudioPlayback?
     private var reconnectTask: Task<Void, Never>?
     private var retryAttempt = 0
     private var savedEndpoint: NWEndpoint?
@@ -39,8 +50,7 @@ struct DiscoveredServer: Identifiable {
     private var serverFailure: String?
     private let browseQueue = DispatchQueue(label: "Screener.discovery")
     private let decodeQueue = DispatchQueue(label: "Screener.decode", qos: .userInteractive)
-    private let frameLock = NSLock()
-    nonisolated(unsafe) private var pendingFrame = false // Protected by frameLock.
+    private let frames = LatestValueSlot<(PixelFrame, ObjectIdentifier)>()
     init() {
         if !host.isEmpty, let key = try? SecretStore.read(account: "client:\(host)") { connectionKey = key.code }
         let browser = NWBrowser(for: .bonjour(type: SecureParameters.serviceType, domain: nil), using: .tcp)
@@ -85,17 +95,25 @@ struct DiscoveredServer: Identifiable {
         connecting = true; connected = false; status = "Connecting securely…"; desktop = nil; image = nil; serverFailure = nil; applyingStreamSettings = false
         let peer = PeerConnection(endpoint: endpoint, secret: secret); self.peer = peer
         let decoder = VideoDecoder(); self.decoder = decoder
+        let audio = AudioPlayback(); self.audioPlayer = audio
+        audio.setEnabled(audioEnabled); audio.setVolume(Float(audioVolume))
+        audio.onError = { [weak self, weak peer] text in Task { @MainActor in
+            guard let self, let peer, self.peer === peer else { return }; self.error = text
+        } }
         let peerID = ObjectIdentifier(peer)
         let budget = DecodeBudget()
-        decoder.onImage = { [weak self] image in self?.deliver(PixelFrame(image), peerID: peerID) }
+        decoder.onImage = { [weak self, weak decoder] image in
+            self?.deliver(PixelFrame(image, cursorEmbedded: decoder?.cursorEmbedded ?? true), peerID: peerID)
+        }
         peer.onReady = { [weak self, weak peer] in DispatchQueue.main.async {
             guard let self, let peer, self.peer === peer else { return }
             self.status = "Starting desktop…"
-            try? peer.send(WireMessage(.hello, value: ClientHello(name: Host.current().localizedName ?? "MacBook", fps: self.fps, bitrate: self.bitrate)))
+            try? peer.send(WireMessage(.hello, value: ClientHello(name: Host.current().localizedName ?? "MacBook", fps: self.fps, bitrate: self.bitrate, responsiveCursor: self.responsiveCursor, maximumVideoHeight: self.maximumVideoHeight, audioEnabled: self.audioEnabled)))
         } }
-        peer.onMessage = { [weak self, weak peer, weak decoder] message in
+        peer.onMessage = { [weak self, weak peer, weak decoder, weak audio] message in
             guard let self, let peer, let decoder else { return }
-            if message.kind == .format || message.kind == .video {
+            if message.kind == .audio { audio?.enqueue(message.payload) }
+            else if message.kind == .format || message.kind == .video {
                 guard budget.reserve() else {
                     Task { @MainActor in
                         if self.peer === peer { self.disconnect(); self.error = "Video decoding cannot keep up. Choose 30 fps or a lower quality setting and reconnect." }
@@ -114,21 +132,22 @@ struct DiscoveredServer: Identifiable {
             guard let self, let peer, self.peer === peer else { return }
             self.peer = nil; self.connected = false; self.connecting = false; self.image = nil; self.desktop = nil; self.applyingStreamSettings = false
             let decoder = self.decoder; self.decoder = nil; self.decodeQueue.async { decoder?.invalidate() }
+            self.audioPlayer?.stop(); self.audioPlayer = nil
             self.status = "Disconnected"; if let reason { self.error = reason }
             let rejected = reason != nil && reason == self.serverFailure
             if !rejected && !self.userDisconnected && self.reconnectAutomatically { self.scheduleReconnect() }
         } }
         peer.start()
     }
-    // Keep one frame waiting for the main thread, rather than queueing stale 4K images.
+    // Keep the newest frame while the main thread is busy drawing or handling input.
     nonisolated private func deliver(_ frame: PixelFrame, peerID: ObjectIdentifier) {
-        frameLock.lock(); guard !pendingFrame else { frameLock.unlock(); return }; pendingFrame = true; frameLock.unlock()
+        guard frames.offer((frame, peerID)) else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if let peer = self.peer, ObjectIdentifier(peer) == peerID {
-                self.image = frame.buffer; self.receivedFrames += 1; self.retryAttempt = 0
+            guard let self, let (latest, source) = self.frames.take() else { return }
+            if let peer = self.peer, ObjectIdentifier(peer) == source {
+                self.cursorEmbedded = latest.cursorEmbedded
+                self.image = latest.buffer; self.receivedFrames += 1; self.retryAttempt = 0
             }
-            self.frameLock.lock(); self.pendingFrame = false; self.frameLock.unlock()
         }
     }
     private func receive(_ message: WireMessage, secret: PairingSecret) {
@@ -138,12 +157,15 @@ struct DiscoveredServer: Identifiable {
                 let info = try message.decode(DesktopInfo.self)
                 guard info.streamWidth > 0, info.streamWidth <= 3840, info.streamHeight > 0, info.streamHeight <= 2160,
                     info.logicalWidth > 0, info.logicalHeight > 0, info.modes.count <= 200 else { throw ScreenerError.message("Invalid desktop configuration.") }
-                guard ConfigureDisplay(modeID: info.currentMode, fps: info.framesPerSecond, bitrate: info.megabitsPerSecond).valid else {
+                guard ConfigureDisplay(modeID: info.currentMode, fps: info.framesPerSecond, bitrate: info.megabitsPerSecond, maximumVideoHeight: info.maximumVideoHeight).valid else {
                     throw ScreenerError.message("Invalid desktop streaming settings.")
                 }
                 desktop = info; connected = true; connecting = false
                 if let value = info.framesPerSecond { fps = value }
                 if let value = info.megabitsPerSecond { bitrate = value }
+                if let embedded = info.cursorEmbedded { responsiveCursor = !embedded }
+                if let height = info.maximumVideoHeight { maximumVideoHeight = height }
+                if let enabled = info.audioEnabled { audioEnabled = enabled; audioPlayer?.setEnabled(enabled) }
                 applyingStreamSettings = false
                 status = "\(info.streamWidth) × \(info.streamHeight) · \(info.framesPerSecond ?? fps) fps target"
                 UserDefaults.standard.set(host, forKey: "lastHost")
@@ -164,6 +186,7 @@ struct DiscoveredServer: Identifiable {
         userDisconnected = true; reconnectTask?.cancel(); reconnectTask = nil
         let peer = peer; self.peer = nil; peer?.close()
         let decoder = decoder; self.decoder = nil; decodeQueue.async { decoder?.invalidate() }
+        audioPlayer?.stop(); audioPlayer = nil
         connected = false; connecting = false; image = nil; desktop = nil; status = "Disconnected"; applyingStreamSettings = false
     }
     private func scheduleReconnect() {
@@ -181,11 +204,32 @@ struct DiscoveredServer: Identifiable {
         if desktop?.modes.contains(where: { $0.id == mode }) == true { try? peer?.send(WireMessage(.configure, value: ConfigureDisplay(modeID: mode))) }
     }
     var supportsLiveStreamSettings: Bool { desktop?.framesPerSecond != nil && desktop?.megabitsPerSecond != nil }
-    var streamSettingsChanged: Bool { supportsLiveStreamSettings && (desktop?.framesPerSecond != fps || desktop?.megabitsPerSecond != bitrate) }
+    var supportsResponsiveCursor: Bool { desktop?.cursorEmbedded != nil }
+    var supportsVideoDetail: Bool { desktop?.maximumVideoHeight != nil }
+    var supportsAudio: Bool { desktop?.audioEnabled != nil }
+    func setAudioEnabled(_ enabled: Bool) {
+        guard !connected || supportsAudio else { return }
+        audioEnabled = enabled; audioPlayer?.setEnabled(enabled)
+        guard connected, let desktop, let peer else { return }
+        do {
+            try peer.send(WireMessage(.configure, value: ConfigureDisplay(modeID: desktop.currentMode, audioEnabled: enabled)))
+            applyingStreamSettings = true; error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+    func setResponsiveCursor(_ enabled: Bool) {
+        guard !connected || supportsResponsiveCursor else { return }
+        responsiveCursor = enabled
+        guard connected, let desktop, let peer else { return }
+        do {
+            try peer.send(WireMessage(.configure, value: ConfigureDisplay(modeID: desktop.currentMode, responsiveCursor: enabled)))
+            applyingStreamSettings = true; error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+    var streamSettingsChanged: Bool { supportsLiveStreamSettings && (desktop?.framesPerSecond != fps || desktop?.megabitsPerSecond != bitrate || (supportsVideoDetail && desktop?.maximumVideoHeight != maximumVideoHeight)) }
     func applyStreamSettings() {
         guard connected, supportsLiveStreamSettings, streamSettingsChanged, !applyingStreamSettings, let desktop, let peer else { return }
         do {
-            try peer.send(WireMessage(.configure, value: ConfigureDisplay(modeID: desktop.currentMode, fps: fps, bitrate: bitrate)))
+            try peer.send(WireMessage(.configure, value: ConfigureDisplay(modeID: desktop.currentMode, fps: fps, bitrate: bitrate, maximumVideoHeight: supportsVideoDetail ? maximumVideoHeight : nil)))
             applyingStreamSettings = true; error = nil
         } catch { self.error = error.localizedDescription }
     }

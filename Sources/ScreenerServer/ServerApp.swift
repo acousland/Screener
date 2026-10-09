@@ -59,7 +59,7 @@ private struct ServerView: View {
                             Picker("Desktop scaling", selection: Binding(get: { desktop.currentMode }, set: { model.setScaling($0) })) {
                                 ForEach(desktop.modes) { mode in Text(mode.label).tag(mode.id) }
                             }
-                            Text("\(desktop.streamWidth) × \(desktop.streamHeight) stream · \(desktop.logicalWidth) × \(desktop.logicalHeight) workspace")
+                            Text("\(model.streamedDesktop?.streamWidth ?? desktop.streamWidth) × \(model.streamedDesktop?.streamHeight ?? desktop.streamHeight) stream · \(desktop.logicalWidth) × \(desktop.logicalHeight) workspace")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Button("Open macOS Display Settings") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Displays-Settings.extension")!) }

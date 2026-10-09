@@ -7,7 +7,7 @@ public enum ScreenerError: LocalizedError {
 }
 
 public enum MessageKind: UInt8, Sendable {
-    case hello = 1, desktop, configure, format, video, input, clipboard, clipboardRequest, failure, ping, pong
+    case hello = 1, desktop, configure, format, video, input, clipboard, clipboardRequest, failure, ping, pong, audio
 }
 public struct WireMessage: Sendable {
     public let kind: MessageKind
@@ -40,7 +40,7 @@ public struct MessageParser {
             guard buffer.count >= 4 + Int(length) else { break }
             let start = buffer.startIndex
             guard let kind = MessageKind(rawValue: buffer[start + 4]) else { throw ScreenerError.message("Unknown network message.") }
-            let limit = kind == .video ? Self.maximumPayload : [.desktop, .format, .clipboard].contains(kind) ? 256 * 1024 : 4096
+            let limit = kind == .video ? Self.maximumPayload : kind == .audio ? 64 * 1024 : [.desktop, .format, .clipboard].contains(kind) ? 256 * 1024 : 4096
             guard Int(length) <= limit else { throw ScreenerError.message("Network message exceeds the limit for its type.") }
             messages.append(WireMessage(kind, payload: Data(buffer[(start + 5)..<(start + 4 + Int(length))])))
             buffer = Data(buffer.dropFirst(4 + Int(length)))
@@ -55,10 +55,18 @@ public struct ClientHello: Codable {
     public let name: String
     public let framesPerSecond: Int
     public let megabitsPerSecond: Int
-    public init(name: String, fps: Int = 60, bitrate: Int = 45) {
+    public let responsiveCursor: Bool?
+    public let maximumVideoHeight: Int?
+    public let audioEnabled: Bool?
+    public init(name: String, fps: Int = 60, bitrate: Int = 45, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil) {
         protocolVersion = 1; self.name = String(name.prefix(100)); framesPerSecond = fps; megabitsPerSecond = bitrate
+        self.responsiveCursor = responsiveCursor
+        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled
     }
-    public var valid: Bool { protocolVersion == 1 && name.count <= 100 && [30, 60].contains(framesPerSecond) && (10...100).contains(megabitsPerSecond) }
+    public var valid: Bool {
+        protocolVersion == 1 && name.count <= 100 && [30, 60].contains(framesPerSecond) && (10...100).contains(megabitsPerSecond)
+        && (maximumVideoHeight.map { [1080, 1440, 2160].contains($0) } ?? true)
+    }
 }
 public struct DisplayModeInfo: Codable, Identifiable, Hashable {
     public let id: Int32
@@ -94,27 +102,39 @@ public struct DesktopInfo: Codable {
     public let modes: [DisplayModeInfo]
     public let framesPerSecond: Int?
     public let megabitsPerSecond: Int?
-    public init(name: String, streamWidth: Int, streamHeight: Int, logicalWidth: Int, logicalHeight: Int, currentMode: Int32, modes: [DisplayModeInfo], framesPerSecond: Int? = nil, megabitsPerSecond: Int? = nil) {
+    public let cursorEmbedded: Bool?
+    public let maximumVideoHeight: Int?
+    public let audioEnabled: Bool?
+    public init(name: String, streamWidth: Int, streamHeight: Int, logicalWidth: Int, logicalHeight: Int, currentMode: Int32, modes: [DisplayModeInfo], framesPerSecond: Int? = nil, megabitsPerSecond: Int? = nil, cursorEmbedded: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil) {
         self.name = name; self.streamWidth = streamWidth; self.streamHeight = streamHeight
         self.logicalWidth = logicalWidth; self.logicalHeight = logicalHeight; self.currentMode = currentMode; self.modes = modes
         self.framesPerSecond = framesPerSecond; self.megabitsPerSecond = megabitsPerSecond
+        self.cursorEmbedded = cursorEmbedded
+        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled
     }
 }
 public struct ConfigureDisplay: Codable {
     public let modeID: Int32
     public let framesPerSecond: Int?
     public let megabitsPerSecond: Int?
-    public init(modeID: Int32, fps: Int? = nil, bitrate: Int? = nil) {
+    public let responsiveCursor: Bool?
+    public let maximumVideoHeight: Int?
+    public let audioEnabled: Bool?
+    public init(modeID: Int32, fps: Int? = nil, bitrate: Int? = nil, responsiveCursor: Bool? = nil, maximumVideoHeight: Int? = nil, audioEnabled: Bool? = nil) {
         self.modeID = modeID; framesPerSecond = fps; megabitsPerSecond = bitrate
+        self.responsiveCursor = responsiveCursor
+        self.maximumVideoHeight = maximumVideoHeight; self.audioEnabled = audioEnabled
     }
     public var valid: Bool {
         (framesPerSecond.map { [30, 60].contains($0) } ?? true)
         && (megabitsPerSecond.map { (10...100).contains($0) } ?? true)
+        && (maximumVideoHeight.map { [1080, 1440, 2160].contains($0) } ?? true)
     }
 }
 public struct VideoFormat: Codable {
     public let parameterSets: [Data]
-    public init(parameterSets: [Data]) { self.parameterSets = parameterSets }
+    public let cursorEmbedded: Bool?
+    public init(parameterSets: [Data], cursorEmbedded: Bool? = nil) { self.parameterSets = parameterSets; self.cursorEmbedded = cursorEmbedded }
 }
 public struct InputEvent: Codable {
     public enum Action: String, Codable { case move, down, up, scroll, keyDown, keyUp, flags }
@@ -148,8 +168,9 @@ public enum VideoPacket {
     }
 }
 public enum ScreenGeometry {
-    public static func streamSize(width: Int, height: Int) -> (Int, Int) {
-        let scale = min(3840.0 / Double(max(1, width)), 2160.0 / Double(max(1, height)), 1)
+    public static func streamSize(width: Int, height: Int, maximumHeight: Int = 2160) -> (Int, Int) {
+        let heightLimit = max(2, min(2160, maximumHeight))
+        let scale = min(3840.0 / Double(max(1, width)), Double(heightLimit) / Double(max(1, height)), 1)
         // Avoid losing two pixels when floating-point scaling lands just below an exact even size.
         return (max(2, Int(Double(width) * scale / 2 + 1e-9) * 2), max(2, Int(Double(height) * scale / 2 + 1e-9) * 2))
     }

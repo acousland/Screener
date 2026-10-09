@@ -84,6 +84,7 @@ public final class PeerConnection: @unchecked Sendable {
     private var timeout: DispatchWorkItem?
     private let lock = NSLock()
     private var videoBusy = false
+    private var audioBusy = false
     private var pendingSends = 0
     public var readyForVideo: Bool { lock.lock(); defer { lock.unlock() }; return !videoBusy }
     public init(_ connection: NWConnection) { self.connection = connection; endpoint = connection.endpoint }
@@ -164,4 +165,16 @@ public final class PeerConnection: @unchecked Sendable {
         return true
     }
     private func clearVideo() { lock.lock(); videoBusy = false; lock.unlock() }
+    @discardableResult public func sendAudio(_ payload: Data) -> Bool {
+        guard !payload.isEmpty, payload.count <= AudioPCM.maximumFrames * 8 else { return false }
+        lock.lock(); guard !audioBusy else { lock.unlock(); return false }; audioBusy = true; lock.unlock()
+        queue.async {
+            guard !self.closed, !self.closing else { self.clearAudio(); return }
+            self.connection.send(content: WireMessage(.audio, payload: payload).framed(), completion: .contentProcessed { error in
+                self.clearAudio(); if let error { self.finish(error.localizedDescription) }
+            })
+        }
+        return true
+    }
+    private func clearAudio() { lock.lock(); audioBusy = false; lock.unlock() }
 }

@@ -23,7 +23,7 @@ import ScreenerCore
             window.isReleasedWhenClosed = false
             window.tabbingMode = .disallowed
             window.collectionBehavior = [.managed, .fullScreenNone, .fullScreenDisallowsTiling]
-            window.contentView = NSHostingView(rootView: SessionControlsView(model: model, windows: self))
+            window.contentView = NSHostingView(rootView: SessionControlsView(model: model, keyboard: model.keyboardCapture, windows: self))
             window.contentMinSize = NSSize(width: 400, height: 560)
             window.center()
             window.setFrameAutosaveName("ScreenerSessionControls")
@@ -49,6 +49,7 @@ import ScreenerCore
 
 private struct SessionControlsView: View {
     @ObservedObject var model: ClientModel
+    @ObservedObject var keyboard: KeyboardCaptureController
     let windows: SessionControlsWindowController
 
     var body: some View {
@@ -77,7 +78,12 @@ private struct SessionControlsView: View {
                 }
                 Section("Video") {
                     Picker("Frame rate", selection: $model.fps) { Text("30 fps").tag(30); Text("60 fps").tag(60) }
-                    Picker("Quality", selection: $model.bitrate) { Text("25 Mbps").tag(25); Text("45 Mbps").tag(45); Text("75 Mbps").tag(75) }
+                    Picker("Quality", selection: $model.bitrate) { Text("25 Mbps").tag(25); Text("45 Mbps").tag(45); Text("75 Mbps").tag(75); Text("100 Mbps").tag(100) }
+                    Picker("Video detail", selection: $model.maximumVideoHeight) {
+                        Text("Full · up to 4K").tag(2160); Text("Balanced · 1440p").tag(1440); Text("Fast · 1080p").tag(1080)
+                    }.disabled(model.connected && !model.supportsVideoDetail)
+                    Text("Lower detail reduces video work while keeping the desktop workspace size. Full gives the sharpest text.")
+                        .font(.caption).foregroundStyle(.secondary)
                     if model.connected {
                         Button(model.applyingStreamSettings ? "Applying…" : "Apply Video Settings") { model.applyStreamSettings() }
                             .disabled(!model.streamSettingsChanged || model.applyingStreamSettings)
@@ -89,9 +95,36 @@ private struct SessionControlsView: View {
                         Text("These settings will be used on your next connection.").font(.caption).foregroundStyle(.secondary)
                     }
                 }.disabled(model.applyingStreamSettings || (model.connected && !model.supportsLiveStreamSettings))
+                Section("Audio") {
+                    Toggle("Play mini audio on this Mac", isOn: Binding(get: { model.audioEnabled }, set: { model.setAudioEnabled($0) }))
+                        .disabled(model.applyingStreamSettings || (model.connected && !model.supportsAudio))
+                    HStack {
+                        Text("Volume")
+                        Slider(value: $model.audioVolume, in: 0...1).disabled(!model.audioEnabled)
+                        Text("\(Int(model.audioVolume * 100))%").monospacedDigit().frame(width: 40)
+                    }
+                    Text(model.connected && !model.supportsAudio
+                        ? "Update Screener Server to 0.1.4 or later to hear the mini."
+                        : "System audio plays through this Mac's selected output. Volume affects this Mac only.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Session") {
+                    Toggle("Responsive Cursor", isOn: Binding(get: { model.responsiveCursor }, set: { model.setResponsiveCursor($0) }))
+                        .disabled(model.applyingStreamSettings || (model.connected && !model.supportsResponsiveCursor))
+                    Text(model.connected && !model.supportsResponsiveCursor
+                        ? "Update Screener Server to 0.1.4 or later for a responsive cursor."
+                        : "Move the pointer locally without waiting for video. Turn off for the mini's exact cursor shapes.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Toggle("Transparent Mode in full screen", isOn: $model.transparentMode)
                     Toggle("Send keyboard shortcuts to mini", isOn: $model.captureShortcuts)
+                    if model.captureShortcuts && !keyboard.available {
+                        Text("Allow Accessibility for Screener Client to send system shortcuts such as Command–Space to the mini.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Allow Shortcut Capture…") { keyboard.requestAccess() }
+                        if keyboard.permissionGranted {
+                            Text("Quit and reopen Screener Client if shortcut capture is still unavailable.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     Toggle("Reconnect after a dropped connection", isOn: $model.reconnectAutomatically)
                 }
                 Section("Clipboard") {

@@ -24,6 +24,15 @@ import ScreenerCore
     @Published var clipboardEnabled = UserDefaults.standard.bool(forKey: "allowClipboard")
     var hostAddress: String { (Host.current().localizedName ?? ProcessInfo.processInfo.hostName) }
     var networkAddress: String { ProcessInfo.processInfo.hostName }
+    var streamedDesktop: DesktopInfo? {
+        guard let desktop else { return nil }
+        let size = ScreenGeometry.streamSize(width: desktop.streamWidth, height: desktop.streamHeight, maximumHeight: hello?.maximumVideoHeight ?? 2160)
+        return DesktopInfo(name: desktop.name, streamWidth: size.0, streamHeight: size.1,
+            logicalWidth: desktop.logicalWidth, logicalHeight: desktop.logicalHeight, currentMode: desktop.currentMode,
+            modes: desktop.modes, framesPerSecond: hello?.framesPerSecond, megabitsPerSecond: hello?.megabitsPerSecond,
+            cursorEmbedded: !(hello?.responsiveCursor ?? false), maximumVideoHeight: hello?.maximumVideoHeight ?? 2160,
+            audioEnabled: hello?.audioEnabled ?? false)
+    }
     private let displayManager = Displays()
     private let input = InputInjector()
     private var secret: PairingSecret?
@@ -180,9 +189,13 @@ import ScreenerCore
         guard configuration.valid, let hello, let desktop else { throw ScreenerError.message("Unsupported streaming settings.") }
         guard desktop.modes.contains(where: { $0.id == configuration.modeID }) else { throw ScreenerError.message("That display resolution is no longer available.") }
         let updated = ClientHello(name: hello.name, fps: configuration.framesPerSecond ?? hello.framesPerSecond,
-            bitrate: configuration.megabitsPerSecond ?? hello.megabitsPerSecond)
+            bitrate: configuration.megabitsPerSecond ?? hello.megabitsPerSecond,
+            responsiveCursor: configuration.responsiveCursor ?? hello.responsiveCursor ?? false,
+            maximumVideoHeight: configuration.maximumVideoHeight ?? hello.maximumVideoHeight ?? 2160,
+            audioEnabled: configuration.audioEnabled ?? hello.audioEnabled ?? false)
         let changed = configuration.modeID != desktop.currentMode || updated.framesPerSecond != hello.framesPerSecond
-            || updated.megabitsPerSecond != hello.megabitsPerSecond
+            || updated.megabitsPerSecond != hello.megabitsPerSecond || updated.responsiveCursor != (hello.responsiveCursor ?? false)
+            || updated.maximumVideoHeight != (hello.maximumVideoHeight ?? 2160) || updated.audioEnabled != (hello.audioEnabled ?? false)
         if configuration.modeID != desktop.currentMode { try displayManager.setMode(configuration.modeID, on: selectedDisplay) }
         self.hello = updated
         refresh(restartStream: false)
@@ -190,10 +203,7 @@ import ScreenerCore
         if changed { Task { await restartCapture() } }
     }
     private func sendDesktop() {
-        guard let desktop, let viewer else { return }
-        let info = DesktopInfo(name: desktop.name, streamWidth: desktop.streamWidth, streamHeight: desktop.streamHeight,
-            logicalWidth: desktop.logicalWidth, logicalHeight: desktop.logicalHeight, currentMode: desktop.currentMode,
-            modes: desktop.modes, framesPerSecond: hello?.framesPerSecond, megabitsPerSecond: hello?.megabitsPerSecond)
+        guard let info = streamedDesktop, let viewer else { return }
         try? viewer.send(WireMessage(.desktop, value: info))
     }
     private func sendFailure(_ text: String) { if let viewer { try? viewer.send(WireMessage(.failure, value: text)) } }
@@ -201,16 +211,25 @@ import ScreenerCore
         generation += 1; let current = generation
         let previous = capture; capture = nil; streaming = false
         await previous?.stop()
-        guard current == generation, let peer = viewer, let hello, let desktop else { return }
+        guard current == generation, let peer = viewer, let hello, let desktop = streamedDesktop else { return }
         let capture = DesktopCapture(); self.capture = capture
         capture.onError = { [weak self] text in Task { @MainActor in
             guard let self, self.generation == current else { return }; self.error = text; self.stopSession(text)
         } }
+        capture.onAudioError = { [weak self] text in Task { @MainActor in
+            guard let self, self.generation == current else { return }; self.error = text; self.sendFailure(text)
+        } }
         do {
+            let cursorEmbedded = !(hello.responsiveCursor ?? false)
             try await capture.start(displayID: selectedDisplay, width: desktop.streamWidth, height: desktop.streamHeight,
-                fps: hello.framesPerSecond, bitrate: hello.megabitsPerSecond, canSend: { [weak peer] in peer?.readyForVideo == true },
-                onFormat: { [weak peer] format in try? peer?.send(WireMessage(.format, value: format)) },
-                onFrame: { [weak peer] frame in peer?.sendVideo(frame) == true })
+                fps: hello.framesPerSecond, bitrate: hello.megabitsPerSecond, showsCursor: cursorEmbedded,
+                capturesAudio: hello.audioEnabled ?? false,
+                canSend: { [weak peer] in peer?.readyForVideo == true },
+                onFormat: { [weak peer] format in
+                    try? peer?.send(WireMessage(.format, value: VideoFormat(parameterSets: format.parameterSets, cursorEmbedded: cursorEmbedded)))
+                },
+                onFrame: { [weak peer] frame in peer?.sendVideo(frame) == true },
+                onAudio: { [weak peer] pcm in peer?.sendAudio(pcm) == true })
             guard current == generation, viewer === peer else { await capture.stop(); return }
             streaming = true; status = "Sharing \(desktop.name)"
         } catch { if current == generation { self.error = error.localizedDescription; stopSession(error.localizedDescription) } }

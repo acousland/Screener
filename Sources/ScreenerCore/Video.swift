@@ -17,7 +17,8 @@ public final class VideoEncoder {
         self.fps = Int32(fps)
         let ref = Unmanaged.passUnretained(self).toOpaque()
         let status = VTCompressionSessionCreate(allocator: kCFAllocatorDefault, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
-            encoderSpecification: [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder:true] as CFDictionary,
+            encoderSpecification: [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder:true,
+                kVTVideoEncoderSpecification_EnableLowLatencyRateControl:true] as CFDictionary,
             imageBufferAttributes: nil, compressedDataAllocator: nil, outputCallback: { ref, _, status, _, sample in
                 guard let ref else { return }
                 let encoder = Unmanaged<VideoEncoder>.fromOpaque(ref).takeUnretainedValue()
@@ -29,6 +30,9 @@ public final class VideoEncoder {
         let properties: [CFString: Any] = [kVTCompressionPropertyKey_RealTime:true,
             kVTCompressionPropertyKey_AllowFrameReordering:false,
             kVTCompressionPropertyKey_ProfileLevel:kVTProfileLevel_H264_High_AutoLevel,
+            kVTCompressionPropertyKey_ColorPrimaries:kCVImageBufferColorPrimaries_ITU_R_709_2,
+            kVTCompressionPropertyKey_TransferFunction:kCVImageBufferTransferFunction_ITU_R_709_2,
+            kVTCompressionPropertyKey_YCbCrMatrix:kCVImageBufferYCbCrMatrix_ITU_R_709_2,
             kVTCompressionPropertyKey_AverageBitRate:megabits * 1_000_000,
             kVTCompressionPropertyKey_ExpectedFrameRate:fps,
             kVTCompressionPropertyKey_MaxKeyFrameInterval:fps * 2,
@@ -77,26 +81,34 @@ public final class VideoEncoder {
 
 public final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     public var onError: ((String) -> Void)?
+    public var onAudioError: ((String) -> Void)?
     private var stream: SCStream?
     private var encoder: VideoEncoder?
     private var canSend: () -> Bool = { false }
+    private var onAudio: ((Data) -> Bool)?
+    private var audioFailed = false
+    private let audioQueue = DispatchQueue(label: "Screener.capture.audio", qos: .userInteractive)
     private let queue = DispatchQueue(label: "Screener.capture", qos: .userInteractive)
-    public func start(displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int, bitrate: Int,
-        canSend: @escaping () -> Bool, onFormat: @escaping (VideoFormat) -> Void, onFrame: @escaping (Data) -> Bool) async throws {
+    public func start(displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int, bitrate: Int, showsCursor: Bool = true, capturesAudio: Bool = false,
+        canSend: @escaping () -> Bool, onFormat: @escaping (VideoFormat) -> Void, onFrame: @escaping (Data) -> Bool, onAudio: ((Data) -> Bool)? = nil) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else { throw ScreenerError.message("The selected display is no longer available.") }
         let encoder = try VideoEncoder(width: width, height: height, fps: fps, megabits: bitrate)
         encoder.onFormat = onFormat; encoder.onFrame = onFrame; encoder.onError = { [weak self] in self?.onError?($0) }
-        self.encoder = encoder; self.canSend = canSend
+        self.encoder = encoder; self.canSend = canSend; self.onAudio = onAudio
         let configuration = SCStreamConfiguration()
         configuration.width = width; configuration.height = height
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        configuration.colorSpaceName = CGColorSpace.itur_709
+        configuration.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: Int32(fps))
-        configuration.queueDepth = 3; configuration.showsCursor = true; configuration.capturesAudio = false
+        configuration.queueDepth = 3; configuration.showsCursor = showsCursor; configuration.capturesAudio = capturesAudio
+        configuration.sampleRate = 48000; configuration.channelCount = 2; configuration.excludesCurrentProcessAudio = true
         configuration.scalesToFit = true
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        if capturesAudio { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue) }
         self.stream = stream
         try await stream.startCapture()
     }
@@ -107,6 +119,12 @@ public final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     public func stream(_ stream: SCStream, didStopWithError error: Error) { onError?(error.localizedDescription) }
     public func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
+        if type == .audio, sample.isValid {
+            guard !audioFailed, CMSampleBufferGetNumSamples(sample) > 0 else { return }
+            do { _ = onAudio?(try AudioPCM.encode(sample)) }
+            catch { audioFailed = true; onAudioError?("System audio capture failed: \(error.localizedDescription)") }
+            return
+        }
         guard type == .screen, sample.isValid, canSend(),
             let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
             let status = attachments.first?[.status] as? Int, status == SCFrameStatus.complete.rawValue,
@@ -122,11 +140,16 @@ public final class VideoDecoder: @unchecked Sendable {
     private var format: CMVideoFormatDescription?
     private var parameterSets: [Data] = []
     private var hasKeyframe = false
+    private let cursorLock = NSLock()
+    private var embeddedCursor = true
+    public var cursorEmbedded: Bool { cursorLock.lock(); defer { cursorLock.unlock() }; return embeddedCursor }
     public init() {}
     public func configure(_ info: VideoFormat) throws {
         guard info.parameterSets.count == 2, info.parameterSets.allSatisfy({ !$0.isEmpty && $0.count <= 65536 }) else { throw ScreenerError.message("Invalid H.264 configuration.") }
-        if parameterSets == info.parameterSets, session != nil { return }
+        let embedded = info.cursorEmbedded ?? true // Older servers always include the cursor in video.
+        if parameterSets == info.parameterSets, session != nil, cursorEmbedded == embedded { return }
         invalidate()
+        cursorLock.lock(); embeddedCursor = embedded; cursorLock.unlock()
         var description: CMVideoFormatDescription?
         let status = info.parameterSets[0].withUnsafeBytes { sps in
             info.parameterSets[1].withUnsafeBytes { pps in
@@ -177,7 +200,8 @@ public final class VideoDecoder: @unchecked Sendable {
         let made = CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format, sampleCount: 1,
             sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample)
         guard made == noErr, let sample else { throw ScreenerError.message("Could not create a video sample.") }
-        let decoded = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [._EnableAsynchronousDecompression, ._EnableTemporalProcessing], frameRefcon: nil, infoFlagsOut: nil)
+        // Our encoder never emits B frames, so display-order buffering is unnecessary.
+        let decoded = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [._EnableAsynchronousDecompression], frameRefcon: nil, infoFlagsOut: nil)
         guard decoded == noErr else { hasKeyframe = false; throw ScreenerError.message("Video decoding failed (\(decoded)).") }
     }
     public func invalidate() {
