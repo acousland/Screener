@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+Vendor/
+dist/
+.DS_Store
+.secrets/
+*.p12
+*.p8
+*.pem
+*.key
+*.log
