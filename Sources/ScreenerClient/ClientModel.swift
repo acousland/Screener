@@ -223,7 +223,9 @@ struct PairedServer: Codable, Identifiable {
                     }
                     status = "Paired with \(info.name)"
                     if desiredSession {
-                        if !selectedDisplayWasVirtual, let preferredDisplayName, let display = info.displays.first(where: { $0.name == preferredDisplayName }), display.id != info.selectedDisplay {
+                        if info.update?.busy == true {
+                            resumeAfterScreenCreation = true; status = "Waiting for the Server update to finish…"
+                        } else if !selectedDisplayWasVirtual, let preferredDisplayName, let display = info.displays.first(where: { $0.name == preferredDisplayName }), display.id != info.selectedDisplay {
                             resumeAfterScreenCreation = true; sendServerCommand(ServerCommand(.selectDisplay, displayID: display.id))
                         } else if selectedDisplayWasVirtual, info.displays.contains(where: { $0.virtual }) == false, info.selectedDisplay != 0 {
                             // A relaunched server needs a new virtual screen rather than silently sharing a physical one.
@@ -349,7 +351,8 @@ struct PairedServer: Codable, Identifiable {
         sendServerCommand(ServerCommand(.selectDisplay, displayID: id))
     }
     func startScreen() {
-        guard linked, !connected, !applyingServerCommand else { return }
+        guard linked, !connected, !applyingServerCommand, serverStatus?.update?.busy != true else { return }
+        resumeAfterScreenCreation = false
         desiredSession = true; status = "Starting Screener screen…"
         selectedDisplayWasVirtual = serverStatus?.selectedDisplay == 0 || serverStatus?.displays.first(where: { $0.id == serverStatus?.selectedDisplay })?.virtual == true
         preferredDisplayName = serverStatus?.displays.first(where: { $0.id == serverStatus?.selectedDisplay })?.name
