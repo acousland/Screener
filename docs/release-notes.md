@@ -1,16 +1,11 @@
-Adds a separate **Session Controls** window for use on another macOS desktop/Space while the remote desktop stays in transparent full screen. The controls open on the regular desktop before entering transparent full screen, and can be moved with Mission Control.
+Adds the missing **16:10 HiDPI resolutions** for the MacBook's usable screen area. Both the Client and Server show **16:10** or **16:9** beside the relevant resolutions.
 
-Use **Control–Option–S** to switch between the remote desktop and its controls, or choose **View → Session Controls…** and **Return to Desktop**. Closing the controls does not disconnect the session; the shortcut reopens them.
+The virtual monitor now offers 1280 × 800, 1440 × 900, 1512 × 945, 1680 × 1050, 1728 × 1080, 1920 × 1200, 2240 × 1400, 2560 × 1600, 3008 × 1880 and 3360 × 2100 HiDPI workspaces. Existing 16:9 modes remain available. New installations default to 1920 × 1200; existing saved scaling is preserved.
 
-- Change resolution during the session.
-- Change frame rate and quality with **Apply Video Settings**. Video pauses briefly while capture restarts; the connection remains open.
-- Change Transparent Mode, keyboard shortcut forwarding and automatic reconnect.
-- Transfer clipboard text, view errors or disconnect.
+Update both apps using **Check for Updates…**, then quit and reopen **Screener Server** so its virtual monitor is recreated with the new modes. Select **Screener 4K · Virtual** on the Server, and choose a **16:10 · HiDPI** resolution under **Session Controls → Display → Resolution**. Use **Control–Option–S** to switch to the controls while the remote desktop stays in transparent full screen.
 
-Update **both Server and Client** to 0.1.2 for live frame-rate and quality changes. A new Client connected to an older Server still supports resolution changes and disables unsupported live video controls. The connection key is unchanged by this update.
+A 2560 × 1600 HiDPI workspace streams at 3456 × 2160, preserving 16:10 within the existing video limit. This update also fixes floating-point rounding that could shave two pixels off some scaled streams. These modes match the area below the notch, rather than the extra notch/menu-bar strip. Physical monitors continue to offer their own macOS-supported modes.
 
-Transparent Mode keeps the remote window's controls hidden while the settings window has focus. The local menu bar, Dock and cursor return for the controls. **Control–Option–T** toggles Transparent Mode; **Control–Option–Esc** still exits transparent full screen.
-
-Apple High Performance Screen Sharing can remove Screener’s virtual monitor and leave its fixed identity unavailable. Use Standard Screen Sharing while setting up Screener. Recovery from that virtual-display conflict remains a known limitation.
+The connection key is unchanged. Apple High Performance Screen Sharing can still conflict with Screener's virtual monitor; use Standard Screen Sharing while setting it up.
 
 Both apps are built and signed locally, then notarized by Apple. Sparkle verifies the signed update feeds and archives. GitHub Actions remains disabled.

@@ -28,7 +28,9 @@ Use a stable LAN connection. Wired Ethernet on the mini is recommended. TCP port
 
 ## Display scaling
 
-Desktop workspace, backing pixels, and network pixels are independent. For example, “looks like 2560 × 1440” can render at 5120 × 2880 and be downsampled into a 3840 × 2160 stream. The server advertises backing modes for logical workspaces including 1920 × 1080, 2560 × 1440 and 3008 × 1692, and enumerates the modes actually returned by macOS. Portrait and non-16:9 physical displays retain their aspect ratio within the 4K stream limit.
+Desktop workspace, backing pixels, and network pixels are independent. For example, “looks like 2560 × 1440” can render at 5120 × 2880 and be downsampled into a 3840 × 2160 stream. The virtual monitor offers both **16:10** MacBook workspaces and **16:9** workspaces, with the ratio shown beside each resolution. The 16:10 choices include 1280 × 800, 1440 × 900, 1512 × 945, 1680 × 1050, 1728 × 1080, 1920 × 1200, 2240 × 1400, 2560 × 1600, 3008 × 1880 and 3360 × 2100, all with HiDPI backing modes. A 2560 × 1600 workspace renders at 5120 × 3200 and streams at 3456 × 2160 to preserve 16:10 within the video limit.
+
+New installations default to 1920 × 1200; existing saved scaling is preserved. After updating Screener Server to 0.1.3 or later, quit and reopen it to recreate the virtual monitor with the additional modes. Select **Screener 4K · Virtual** on the Server, then choose a **16:10 · HiDPI** resolution in the Client's Session Controls or the Server's scaling picker. The 16:10 modes match the usable area below the MacBook Pro's notch; they do not include the extra notch strip. Physical monitors offer the modes returned by macOS and retain their aspect ratio within the 4K stream limit.
 
 Virtual display creation uses the private `CGVirtualDisplay` family, resolved at runtime with a user-facing failure if unavailable. This is a directly distributed app, not a Mac App Store submission. A physical monitor remains an available capture source.
 
@@ -45,7 +47,7 @@ Both bundles are written to `dist/`. Builds use Developer ID if available, other
 
 Compilation, tests, signing and notarization run locally. GitHub Actions is disabled; GitHub hosts the source, releases and update feeds.
 
-`ScreenerDiagnostics` reports permissions and hardware decode capability without requesting permissions. `ScreenerDiagnostics --virtual-display` creates a temporary monitor, reports the actual modes and verifies 1920 × 1080 and 2560 × 1440 HiDPI; `--hold` keeps it alive for 30 seconds for inspection.
+`ScreenerDiagnostics` reports permissions and hardware decode capability without requesting permissions. `ScreenerDiagnostics --virtual-display` creates a temporary monitor, reports the actual modes and verifies both 16:9 and 16:10 HiDPI workspaces; `--hold` keeps it alive for 30 seconds for inspection. Run the virtual-display diagnostic with Screener Server closed.
 
 ## Updates and releases
 

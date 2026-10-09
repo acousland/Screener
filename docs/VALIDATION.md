@@ -10,6 +10,8 @@ The 0.1.1 unrestricted local test run completed **13 passing tests, no skips and
 
 The 0.1.2 local test run completed **16 passing tests, no skips and no failures**. The additional tests validate live frame-rate/bitrate bounds and compatibility of the extended configuration and desktop messages with older resolution-only messages. See `.build/test-session-controls.log` locally. The separate Session Controls window and live settings handling compile locally in both applications. The controls use an ordinary managed window without full-screen auxiliary or all-Spaces behavior, and open before the viewer's full-screen transition. Live Space switching, focus restoration and capture restart after video-setting changes still need validation on the target Macs.
 
+The 0.1.3 local test run completed **18 passing tests, no skips and no failures**. New checks verify that all ten 16:10 workspaces retain their ratio, fit a 16:10 viewer without letterboxing, and remain within the even-pixel video bounds after HiDPI downsampling. A 3456 × 2160 hardware H.264 encode/decode round trip passes alongside the existing 3840 × 2160 check. See `.build/test-macbook-resolutions.log` locally. The virtual-display bridge now registers both 16:10 and 16:9 modes, and the diagnostic checks required dimensions and 2× backing sizes. A new virtual-monitor diagnostic was not run while the user's existing Screener Server session was active; actual enumeration and live selection of the added modes remain checks for the target pair after restarting the updated Server.
+
 The rejection regression test failed against the 0.1.0 send-then-cancel behavior: the client received no failure message. It passes after the graceful close fix, including when the server releases its reference to the rejected connection. The user subsequently confirmed that their connection works with 0.1.0; the precise original rejection reason was not established.
 
 Transparent Mode compiles locally in the Client. It hides client chrome in full screen, suppresses local menu/Dock presentation and the duplicate cursor only while the remote desktop is active, and provides Control–Option–T / Control–Option–Esc controls. Live visual validation of full-screen transitions, cursor restoration and the shortcuts on the MacBook remains outstanding.
@@ -33,7 +35,8 @@ All compilation, tests, signing and release preparation run locally. No GitHub A
 - Optional live video settings, rejection of invalid rates, and compatibility with older resolution-only configuration/desktop messages.
 - TLS loopback with matching keys, and rejection of a client with the wrong key.
 - Delivery of the Server's final error before a rejected connection closes, with the reason preserved on the client.
-- Hardware 3840 × 2160 H.264 encode/decode and rejection of invalid video configurations.
+- Hardware 3840 × 2160 and 3456 × 2160 H.264 encode/decode and rejection of invalid video configurations.
+- Preservation of 16:10 geometry through HiDPI downsampling and fitting to a MacBook-shaped viewport.
 - ZIP archive and appcast Ed25519 signature verification during release preparation.
 
 ## Two physical Macs
@@ -41,7 +44,7 @@ All compilation, tests, signing and release preparation run locally. No GitHub A
 These checks require the M4 mini and M1 Pro MacBook with the necessary macOS permissions:
 
 1. Start the server headless; confirm a virtual monitor appears in Displays.
-2. Select 1920 × 1080, 2560 × 1440 and 3008 × 1692 HiDPI modes in macOS and in the Client. Confirm text size changes and the stream remains within 4K.
+2. Restart Server 0.1.3 or later and select its virtual monitor. Confirm 16:10 HiDPI modes including 1512 × 945, 1728 × 1080, 1920 × 1200 and 2560 × 1600 appear in macOS and the Client. Switch between these and the existing 16:9 modes; confirm text size changes, the ratio is preserved and video remains within 3840 × 2160. Verify saved scaling survives reopening the Server.
 3. Connect/disconnect a physical monitor while streaming. Select either display and verify preserved aspect ratio and input coordinates.
 4. Type, drag windows, right-click, double-click, scroll, and use Command shortcuts with at least the normal keyboard layout and trackpad.
 5. Hold a key/button while disconnecting and verify the remote desktop is not left with a stuck input state.

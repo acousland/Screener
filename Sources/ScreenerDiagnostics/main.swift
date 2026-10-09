@@ -15,8 +15,10 @@ import VirtualDisplayBridge
                 let details = modes.map { ["logicalWidth":$0.width, "logicalHeight":$0.height, "pixelWidth":$0.pixelWidth, "pixelHeight":$0.pixelHeight] }
                 let object: [String: Any] = ["displayID":monitor.displayID, "modes":details]
                 print(String(data: try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
-                guard modes.contains(where: { $0.width == 1920 && $0.pixelWidth == 3840 }), modes.contains(where: { $0.width == 2560 && $0.pixelWidth == 5120 }) else {
-                    fputs("Required HiDPI modes are missing.\n", stderr); exit(1)
+                for (width, height) in [(1920,1080), (2560,1440), (1512,945), (1728,1080), (1920,1200), (2560,1600), (3360,2100)] {
+                    guard modes.contains(where: { $0.width == width && $0.height == height && $0.pixelWidth == width * 2 && $0.pixelHeight == height * 2 }) else {
+                        fputs("Required \(width) × \(height) HiDPI mode is missing.\n", stderr); exit(1)
+                    }
                 }
                 if args.contains("--hold") { try? await Task.sleep(for: .seconds(30)) }
             } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }

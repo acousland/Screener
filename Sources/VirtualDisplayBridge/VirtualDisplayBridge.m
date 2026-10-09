@@ -64,7 +64,13 @@
                 NSMutableArray *modes = [NSMutableArray array];
                 // With hiDPI enabled, mode dimensions are logical; WindowServer renders at 2x.
                 // This convention is also used by Chromium's virtual-display test utility.
-                const NSUInteger sizes[][2] = {{1920,1080},{2560,1440},{3008,1692},{3360,1890},{3840,2160},{1280,720}};
+                const NSUInteger sizes[][2] = {
+                    // 16:10 workspaces, including the usable areas of the 14- and 16-inch MacBook Pro.
+                    {1920,1200},{1440,900},{1512,945},{1680,1050},{1728,1080},
+                    {2240,1400},{2560,1600},{3008,1880},{3360,2100},{1280,800},
+                    // Keep the existing 16:9 workspaces for external displays and saved preferences.
+                    {1920,1080},{2560,1440},{3008,1692},{3360,1890},{3840,2160},{1280,720}
+                };
                 for (NSUInteger i = 0; i < sizeof(sizes)/sizeof(sizes[0]); i++) {
                     id mode = [[modeClass alloc] initWithWidth:sizes[i][0] height:sizes[i][1] refreshRate:60];
                     if (mode) [modes addObject:mode];

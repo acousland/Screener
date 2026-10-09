@@ -50,7 +50,7 @@ struct HostDisplay: Identifiable, Hashable {
     func restoreScaling(on id: CGDirectDisplayID) {
         let width = UserDefaults.standard.integer(forKey: "virtualLogicalWidth")
         let height = UserDefaults.standard.integer(forKey: "virtualLogicalHeight")
-        let target = modes(id).first { $0.hiDPI && $0.width == (width == 0 ? 1920 : width) && $0.height == (height == 0 ? 1080 : height) }
+        let target = modes(id).first { $0.hiDPI && $0.width == (width == 0 ? 1920 : width) && $0.height == (height == 0 ? 1200 : height) }
         if let target { try? setMode(target.id, on: id) }
     }
     func saveScaling(_ info: DesktopInfo) {

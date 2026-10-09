@@ -67,7 +67,19 @@ public struct DisplayModeInfo: Codable, Identifiable, Hashable {
     public let pixelWidth: Int
     public let pixelHeight: Int
     public var hiDPI: Bool { pixelWidth > width }
-    public var label: String { "\(width) × \(height)\(hiDPI ? " · HiDPI" : "")" }
+    public var aspectRatioLabel: String? {
+        guard width > 0, height > 0 else { return nil }
+        var divisor = width, remainder = height
+        while remainder != 0 { (divisor, remainder) = (remainder, divisor % remainder) }
+        switch (width / divisor, height / divisor) {
+        case (8, 5): return "16:10"
+        case (16, 9): return "16:9"
+        default: return nil
+        }
+    }
+    public var label: String {
+        "\(width) × \(height)\(aspectRatioLabel.map { " · \($0)" } ?? "")\(hiDPI ? " · HiDPI" : "")"
+    }
     public init(id: Int32, width: Int, height: Int, pixelWidth: Int, pixelHeight: Int) {
         self.id = id; self.width = width; self.height = height; self.pixelWidth = pixelWidth; self.pixelHeight = pixelHeight
     }
@@ -138,7 +150,8 @@ public enum VideoPacket {
 public enum ScreenGeometry {
     public static func streamSize(width: Int, height: Int) -> (Int, Int) {
         let scale = min(3840.0 / Double(max(1, width)), 2160.0 / Double(max(1, height)), 1)
-        return (max(2, Int(Double(width) * scale) / 2 * 2), max(2, Int(Double(height) * scale) / 2 * 2))
+        // Avoid losing two pixels when floating-point scaling lands just below an exact even size.
+        return (max(2, Int(Double(width) * scale / 2 + 1e-9) * 2), max(2, Int(Double(height) * scale / 2 + 1e-9) * 2))
     }
     public static func fit(content: CGSize, in bounds: CGRect) -> CGRect {
         guard content.width > 0, content.height > 0, bounds.width > 0, bounds.height > 0 else { return .zero }

@@ -50,6 +50,21 @@ final class ProtocolTests: XCTestCase {
         XCTAssertNotEqual(try PairingSecret(), key)
         for code in ["1234", "", String(repeating: "g", count: 64), String(repeating: "0", count: 65)] { XCTAssertThrowsError(try PairingSecret(code: code)) }
     }
+    func testMacBookAspectRatioSurvivesHiDPIDownsampling() {
+        for (width, height) in [(1280,800), (1440,900), (1512,945), (1680,1050), (1728,1080),
+            (1920,1200), (2240,1400), (2560,1600), (3008,1880), (3360,2100)] {
+            let size = ScreenGeometry.streamSize(width: width * 2, height: height * 2)
+            XCTAssertLessThanOrEqual(size.0, 3840); XCTAssertLessThanOrEqual(size.1, 2160)
+            XCTAssertEqual(size.0 % 2, 0); XCTAssertEqual(size.1 % 2, 0)
+            XCTAssertEqual(Double(size.0) / Double(size.1), 1.6, accuracy: 0.000001, "\(width) × \(height)")
+            let bounds = CGRect(x: 0, y: 0, width: 1728, height: 1080)
+            let fitted = ScreenGeometry.fit(content: CGSize(width: size.0, height: size.1), in: bounds)
+            XCTAssertEqual(fitted.minX, bounds.minX, accuracy: 0.000001); XCTAssertEqual(fitted.minY, bounds.minY, accuracy: 0.000001)
+            XCTAssertEqual(fitted.width, bounds.width, accuracy: 0.000001); XCTAssertEqual(fitted.height, bounds.height, accuracy: 0.000001)
+        }
+        let maximum = ScreenGeometry.streamSize(width: 6720, height: 4200)
+        XCTAssertEqual(maximum.0, 3456); XCTAssertEqual(maximum.1, 2160)
+    }
     func testHelloRejectsUnsupportedVersionsAndRates() throws {
         XCTAssertTrue(ClientHello(name: "MacBook").valid)
         XCTAssertFalse(ClientHello(name: "MacBook", fps: 240).valid)
