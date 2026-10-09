@@ -22,7 +22,7 @@ Sparkle 2.10.0 is embedded in each app, with separate Server and Client feed URL
 
 Apple accepted notarization of both release applications. Both bundles have stapled tickets, pass `xcrun stapler validate`, and are accepted by Gatekeeper as Notarized Developer ID. The separate ZIP archives and appcasts are signed and verified with Sparkle's official `sign_update` tool, and the archive SHA-256 checksums match.
 
-The public repository and v0.1.1 preview release are published at https://github.com/acousland/Screener. Both live feeds and their release downloads were fetched without GitHub authentication. The hosted feed signatures, archive signatures, build versions, enclosure sizes and SHA-256 checksums all verify against the local release. GitHub reports Actions disabled and zero workflow runs.
+The public repository and v0.1.2 preview release are published at https://github.com/acousland/Screener. Both 0.1.2 apps (build 1791518361) are Developer ID signed, notarized, stapled and accepted by Gatekeeper. Both live feeds and their release downloads were fetched without GitHub authentication. The hosted feed signatures, archive signatures, bundle/feed versions, enclosure sizes and SHA-256 checksums all verify against the local release. See `.build/verify-public-0.1.2.log` locally. GitHub reports Actions disabled and zero workflow runs.
 
 All compilation, tests, signing and release preparation run locally. No GitHub Actions workflows are included. A two-Mac capture/input session, installation of a newer build through Sparkle, and sustained 4K60 performance still require checks on the target pair.
 
