@@ -6,16 +6,16 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <link>https://github.com/acousland/Screener</link>
     <description>Updates for Screener Server on Apple silicon Macs.</description>
     <item>
-      <title>Screener Server 0.1.1</title>
-      <pubDate>Fri, 09 Oct 2026 03:50:13 GMT</pubDate>
-      <sparkle:version>1791517776</sparkle:version>
-      <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
+      <title>Screener Server 0.1.2</title>
+      <pubDate>Fri, 09 Oct 2026 04:00:03 GMT</pubDate>
+      <sparkle:version>1791518361</sparkle:version>
+      <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <description>4K remote desktop with macOS HiDPI scaling. See the GitHub release for details.</description>
-      <enclosure url="https://github.com/acousland/Screener/releases/download/v0.1.1/Screener-Server-0.1.1.zip" length="2282129" type="application/octet-stream" sparkle:edSignature="At98vO+gHOC48K14e38FoxOJs47Jqx3oDgtPCaw5IbQ24xB9pk/RhSu7i2p2ROQ+Tc8c8Z9Pn1EEE4DYuQ1iBg=="></enclosure>
+      <enclosure url="https://github.com/acousland/Screener/releases/download/v0.1.2/Screener-Server-0.1.2.zip" length="2285245" type="application/octet-stream" sparkle:edSignature="JYp74vlUhycJNO0g0gl8JNQTEx9AQmOT+K80nr2lzsA2ZC2TjUCsykE3wo1ho92okX2NDXzizBGAruy0z7TkDw=="></enclosure>
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: n7eLyCVFBMbAIQsxE/9y0fZ4WRvVy2EUdIDXC+jlfhK58+en8f8TGx/y+YCUx4bA6LPtSK6AEzIrY96I6ukKDw==
+edSignature: 9ev1aAfFZe1aqd0ffgxKy7ynoCXmG7vHQPIxkkinUBrNgz5XYsUQWOtfYcoxVPUlvbr1JOPfr7cebloDHb/ECA==
 length: 1302
 -->
